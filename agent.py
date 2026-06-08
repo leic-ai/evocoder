@@ -89,37 +89,42 @@ class EvoCoder:
             retry_delay=api_cfg.get("retry_delay", 2),
             timeout=api_cfg.get("timeout", 120),
         )
-        self.memory = MemoryStore(workspace=self.workspace)
+        self.memory = MemoryStore(data_dir=f"{self.workspace}/memory")
         self.registry = ToolRegistry()
         register_builtins(self.registry)
         self.max_iterations = agent_cfg["max_iterations"]
 
         # ── Evolution System ──
         evo_cfg = self.config["evolution"]
-        self.tracker = EvolutionTracker(workspace=self.workspace)
+        evo_dir = f"{self.workspace}/evolution"
+        self.tracker = EvolutionTracker(history_dir=evo_dir)
+
+        # Layer 1: Error pitfall memory
+        self.error_memory = ErrorMemory(memory_path=f"{self.workspace}/error_memory.json")
+
+        # Layer 2: User preference learning
+        self.user_prefs = UserPreferences(memory_path=f"{self.workspace}/user_prefs.json")
+
+        # Layer 3: Task strategy optimization
+        self.strategy_memory = StrategyMemory(memory_path=f"{self.workspace}/strategy_memory.json")
+
+        # Prompt evolution (depends on layers 1-3)
         self.evolver = PromptEvolver(
-            api_key=api_key, base_url=base_url,
-            model=model, workspace=self.workspace,
+            tracker=self.tracker,
+            error_memory=self.error_memory,
+            strategy_memory=self.strategy_memory,
+            user_prefs=self.user_prefs,
+            persist_dir=evo_dir,
         )
         self.evo_threshold = evo_cfg["failure_threshold"]
         self.evo_confidence = evo_cfg["auto_accept_confidence"]
 
-        # Layer 1: Error pitfall memory
-        self.error_memory = ErrorMemory(workspace=self.workspace)
-
-        # Layer 2: User preference learning
-        self.user_prefs = UserPreferences(workspace=self.workspace)
-
-        # Layer 3: Task strategy optimization
-        self.strategy_memory = StrategyMemory(workspace=self.workspace)
-
         # ── Long-term Memory ──
-        self.long_term = LongTermMemory(workspace=self.workspace)
+        self.long_term = LongTermMemory(data_dir=f"{self.workspace}/memory")
 
         # ── Tool Evolution ──
         self.tool_evolver = ToolEvolver(
-            api_key=api_key, base_url=base_url,
-            model=model, workspace=self.workspace,
+            storage_dir=f"{self.workspace}/evolved_tools",
         )
 
         # ── SDD Flow ──
@@ -130,9 +135,7 @@ class EvoCoder:
 
         # ── SubAgent System ──
         self.subagents = SubAgentManager(
-            brain=self.brain,
-            registry=self.registry,
-            workspace=self.workspace,
+            api_key=api_key, base_url=base_url, model=model,
         )
         self._register_subagent_tools()
 
@@ -158,7 +161,8 @@ class EvoCoder:
                 lines.append(f"  {t['icon']} {t['name']}: {t['description']}")
             return "\n".join(lines)
 
-        self.registry.register(
+        self.registry.register_function(
+            func=delegate_to_subagent,
             name="delegate_to_subagent",
             description="Delegate a subtask to a specialized sub-agent. Types: code, debug, research, file, general.",
             parameters={
@@ -169,11 +173,11 @@ class EvoCoder:
                 },
                 "required": ["agent_type", "task"],
             },
-            func=delegate_to_subagent,
             category="subagent",
         )
 
-        self.registry.register(
+        self.registry.register_function(
+            func=delegate_parallel,
             name="delegate_parallel",
             description="Delegate multiple tasks to sub-agents in parallel. Input: JSON array of {agent_type, task}.",
             parameters={
@@ -183,15 +187,14 @@ class EvoCoder:
                 },
                 "required": ["delegations"],
             },
-            func=delegate_parallel,
             category="subagent",
         )
 
-        self.registry.register(
+        self.registry.register_function(
+            func=list_subagent_types,
             name="list_subagent_types",
             description="List available sub-agent types and their capabilities.",
             parameters={"type": "object", "properties": {}, "required": []},
-            func=list_subagent_types,
             category="subagent",
         )
 
