@@ -330,7 +330,7 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
         task_record = self.tracker.start_task(
             category=category, description=user_input,
         )
-        task_id = task_record.id if hasattr(task_record, 'id') else str(task_record)
+        task_id = task_record.task_id
 
         # Get strategy prompt for this category
         strategy_prompt = self.strategy_memory.get_strategy_prompt(category)
