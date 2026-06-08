@@ -178,9 +178,20 @@ class ToolRegistry:
 
     # -- discovery ----------------------------------------------------------
 
-    def list_tools(self) -> List[str]:
-        """Return sorted list of registered tool names."""
-        return sorted(self.tools.keys())
+    def list_tools(self) -> List[Dict[str, Any]]:
+        """Return list of tool info dicts."""
+        result = []
+        for name, tool in sorted(self.tools.items()):
+            total = tool.call_count
+            errors = tool.error_count
+            rate = f"{((total - errors) / total * 100):.0f}%" if total > 0 else "N/A"
+            result.append({
+                "name": name,
+                "category": tool.category,
+                "calls": total,
+                "success_rate": rate,
+            })
+        return result
 
     def get(self, name: str) -> Optional[Tool]:
         """Return the Tool for *name*, or ``None``."""

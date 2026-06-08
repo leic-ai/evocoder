@@ -297,6 +297,79 @@ def cmd_subagents(agent):
     console.print(box_subtitle("─" * 20))
 
 
+def cmd_search(agent, query: str):
+    """Search the web."""
+    if not query:
+        console.print("  [warning]Usage: /search <query>[/warning]")
+        return
+    console.print(f"  [info]Searching: {query}[/info]")
+    result = agent.registry.execute("web_search", {"query": query, "max_results": 5})
+    console.print(Panel(result, title="[info]Search Results[/info]", border_style="cyan"))
+
+
+def cmd_fetch(agent, url: str):
+    """Fetch a web page."""
+    if not url:
+        console.print("  [warning]Usage: /fetch <url>[/warning]")
+        return
+    console.print(f"  [info]Fetching: {url}[/info]")
+    result = agent.registry.execute("web_fetch", {"url": url})
+    console.print(Panel(result[:2000], title="[info]Page Content[/info]", border_style="cyan"))
+
+
+def cmd_sdd(agent, arg: str):
+    """SDD requirement flow."""
+    if not arg:
+        console.print("  [info]SDD Commands:[/info]")
+        console.print("    /sdd new <description>  — Create requirement draft")
+        console.print("    /sdd list               — List requirements")
+        console.print("    /sdd plans              — List plans")
+        return
+
+    parts = arg.split(maxsplit=1)
+    subcmd = parts[0].lower()
+    detail = parts[1] if len(parts) > 1 else ""
+
+    if subcmd == "new" and detail:
+        draft = agent.sdd.create_draft(detail)
+        console.print(f"  [success]Draft created: {draft['id']}[/success]")
+    elif subcmd == "list":
+        reqs = agent.sdd.list_requirements()
+        if reqs:
+            for r in reqs:
+                console.print(f"  • {r['id']}: {r.get('title', 'Untitled')} [{r['status']}]")
+        else:
+            console.print("  [dim]No requirements yet.[/dim]")
+    elif subcmd == "plans":
+        plans = agent.sdd.list_plans()
+        if plans:
+            for p in plans:
+                console.print(f"  • {p['id']}: [{p['status']}]")
+        else:
+            console.print("  [dim]No plans yet.[/dim]")
+    else:
+        console.print("  [warning]Usage: /sdd new|list|plans [description][/warning]")
+
+
+def cmd_token(agent):
+    """Show token cache statistics."""
+    stats = agent.brain.token_cache.get_stats()
+    console.print(box_title("TOKEN CACHE", "bold bright_cyan"))
+
+    t = Table(box=box.ROUNDED, border_style="bright_cyan", show_header=False, padding=(0, 2))
+    t.add_column("Metric", style="bold")
+    t.add_column("Value", justify="right")
+    t.add_row("Cache Hits", str(stats["cache_hits"]))
+    t.add_row("Cache Misses", str(stats["cache_misses"]))
+    t.add_row("Hit Rate", f"{stats['hit_rate']:.1%}")
+    t.add_row("Input Tokens", f"{stats['total_input_tokens']:,}")
+    t.add_row("Output Tokens", f"{stats['total_output_tokens']:,}")
+    t.add_row("Saved Tokens", f"{stats['saved_tokens']:,}")
+    t.add_row("Saved Cost", f"¥{stats['saved_cost']:.4f}")
+    console.print(t)
+    console.print(box_subtitle("─" * 20))
+
+
 def cmd_help():
     console.print(box_title("HELP", "bold bright_cyan"))
     commands = [
@@ -306,6 +379,10 @@ def cmd_help():
         ("/evolve", "Evolution system status"),
         ("/evolve tools", "View evolved tools"),
         ("/evolve <cat>", "View category evolution"),
+        ("/search <query>", "Search the web"),
+        ("/fetch <url>", "Fetch web page content"),
+        ("/sdd <cmd>", "SDD requirement flow"),
+        ("/token", "Token cache statistics"),
         ("/memory", "Long-term memory stats"),
         ("/pitfalls", "Known error patterns"),
         ("/prefs", "Learned preferences"),
@@ -387,6 +464,14 @@ def main():
                 cmd_prefs(agent)
             elif cmd == "/subagents":
                 cmd_subagents(agent)
+            elif cmd == "/search":
+                cmd_search(agent, arg)
+            elif cmd == "/fetch":
+                cmd_fetch(agent, arg)
+            elif cmd == "/sdd":
+                cmd_sdd(agent, arg)
+            elif cmd == "/token":
+                cmd_token(agent)
             elif cmd == "/name":
                 if arg:
                     agent.long_term.update_user(name=arg)
