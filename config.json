@@ -1,0 +1,45 @@
+{
+  "api": {
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-v4-pro",
+    "max_retries": 3,
+    "retry_delay": 2,
+    "timeout": 120,
+    "read_timeout": 30,
+    "connect_timeout": 15
+  },
+  "agent": {
+    "max_iterations": 25,
+    "workspace": ".evocoder"
+  },
+  "evolution": {
+    "failure_threshold": 3,
+    "auto_accept_confidence": 0.7
+  },
+  "task_categories": {
+    "code": {
+      "keywords": ["write", "code", "function", "class", "implement", "create", "python", "build", "script"],
+      "description": "Code generation tasks"
+    },
+    "debug": {
+      "keywords": ["bug", "error", "fix", "exception", "debug", "traceback"],
+      "description": "Debugging tasks"
+    },
+    "refactor": {
+      "keywords": ["refactor", "optimize", "improve", "rewrite", "clean"],
+      "description": "Code refactoring tasks"
+    },
+    "file": {
+      "keywords": ["read", "file", "view", "show", "list", "directory"],
+      "description": "File operations"
+    },
+    "git": {
+      "keywords": ["git", "commit", "push", "pull", "branch", "merge"],
+      "description": "Git operations"
+    },
+    "search": {
+      "keywords": ["search", "find", "grep", "look", "locate"],
+      "description": "Search tasks"
+    }
+  }
+}
