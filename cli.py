@@ -496,15 +496,16 @@ def main():
                     console.print("  [warning]Usage: /name <your_name>[/warning]")
             elif cmd == "/feedback":
                 if arg in ("+", "positive", "good"):
-                    agent.user_prefs.learn_from_feedback("", "", True)
+                    agent.user_prefs.learn_from_feedback("positive feedback - user is satisfied with the output")
                     console.print("  [success]Thanks! Reinforcing positive patterns.[/success]")
                 elif arg in ("-", "negative", "bad"):
-                    agent.user_prefs.learn_from_feedback("", "", False)
+                    agent.user_prefs.learn_from_feedback("negative feedback - user wants different approach")
                     console.print("  [info]Noted. Will avoid this pattern.[/info]")
                 else:
                     console.print("  [warning]Usage: /feedback +/-[/warning]")
             elif cmd == "/clear":
-                agent.memory.clear_session()
+                agent.memory.clear_conversation()
+                agent.memory.clear_working()
                 console.print("  [info]Session cleared.[/info]")
             else:
                 console.print(f"  [warning]Unknown command: {cmd}. Type /help for commands.[/warning]")

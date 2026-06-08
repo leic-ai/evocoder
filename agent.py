@@ -272,12 +272,12 @@ class EvoCoder:
         # Layer 3: Task strategy
         strategy_prompt = self.strategy_memory.get_strategy_prompt(category)
         if strategy_prompt:
-            sections.append(strategy_prompt)
+            sections.append(f"[Task Strategy - {category}]\n{strategy_prompt}")
 
         # Evolved prompt override (if exists)
-        evolved = self.evolver.get_prompt(category)
+        evolved = self.evolver.get_prompt(include_style=False)
         if evolved:
-            sections.append(f"[Evolved prompt for {category}]\n{evolved}")
+            sections.append(f"[Evolved System Prompt]\n{evolved}")
 
         return "\n\n".join(sections)
 
@@ -332,7 +332,8 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
         )
         task_id = task_record.id if hasattr(task_record, 'id') else str(task_record)
 
-        strategy = self.strategy_memory.best_strategy_for(category)
+        # Get strategy prompt for this category
+        strategy_prompt = self.strategy_memory.get_strategy_prompt(category)
         self.memory.add_conversation("user", user_input)
 
         experiences = self.memory.get_similar_experiences(user_input)
@@ -428,10 +429,9 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
                 if is_error:
                     code_for_memory = tool_args.get("content") or tool_args.get("new_string") or json.dumps(tool_args)
                     self.error_memory.record_failure(
-                        code_snippet=code_for_memory[:300],
-                        error_msg=result,
-                        fix_applied="",
                         task=user_input[:200],
+                        error_msg=result,
+                        attempted_solution=code_for_memory[:300],
                     )
 
                 self.tool_evolver.record_tool_call(tool_name, tool_args, not is_error)
@@ -493,8 +493,8 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
             if success and final_response:
                 self.user_prefs.learn_from_code(final_response)
 
-        if not success and self.tracker.should_evolve(category, self.evo_threshold):
-            print(f"\n  [Evolution] {category} tasks failed consecutively, analyzing...")
+        if not success and self.tracker.should_evolve():
+            print(f"\n  [Evolution] {category} tasks need evolution, analyzing...")
             self._try_evolve(category)
 
         patterns = self.tool_evolver.detect_patterns()
@@ -551,15 +551,21 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
     def get_evolution_status(self) -> dict:
         categories = list(self.config.get("task_categories", {}).keys()) + ["general"]
         status = {}
+        # Get all evolution history
+        all_history = self.evolver.get_evolution_history()
+        # Get strategy stats
+        strategy_stats = self.strategy_memory.get_stats()
+
         for cat in categories:
-            history = self.evolver.get_evolution_history(cat)
-            stats = self.strategy_memory.stats.get(cat, {})
-            total = stats.get("total", 0)
-            success = stats.get("success", 0)
+            # Filter history for this category
+            cat_history = [h for h in all_history if h.get("analysis", {}).get("category") == cat]
+            stats = strategy_stats.get(cat, {})
+            total = stats.get("total_tasks", 0)
+            success = stats.get("success_count", 0)
             status[cat] = {
-                "versions": len(history),
-                "has_evolved": any(h["status"] == "accepted" for h in history),
-                "strategy": self.strategy_memory.get_strategy(cat).get("approach", "default"),
+                "versions": len(cat_history),
+                "has_evolved": any(h.get("accepted", False) for h in cat_history),
+                "strategy": self.strategy_memory.get_strategy_prompt(cat)[:50] if self.strategy_memory.get_strategy_prompt(cat) else "default",
                 "total_tasks": total,
                 "success_rate": success / total if total > 0 else 0,
             }

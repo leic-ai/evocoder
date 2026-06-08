@@ -433,23 +433,29 @@ class SubAgentManager:
         error_msg: Optional[str] = None
 
         try:
+            # Build message history for Brain
+            messages = [{"role": "user", "content": current_prompt}]
+
             for iteration in range(1, max_iterations + 1):
                 iterations_used = iteration
 
                 # Think: get LLM response (may contain tool calls)
                 with self._brain_lock:
-                    response_text = brain.think(
-                        current_prompt,
+                    response = brain.think(
+                        messages,
                         tools=tool_schemas if tool_schemas else None,
-                        remember=True,
-                        use_cache=(iteration > 1),  # skip cache on first call
                     )
 
+                # Extract response content
+                response_text = response.content if hasattr(response, 'content') else str(response)
                 last_output = response_text
 
                 # Check if the agent signals completion
                 if self._is_task_complete(response_text):
                     break
+
+                # Add assistant response to message history
+                messages.append({"role": "assistant", "content": response_text})
 
                 # Try to execute any tool calls embedded in the response
                 tool_results = self._extract_and_execute_tools(
@@ -458,21 +464,25 @@ class SubAgentManager:
 
                 if tool_results:
                     tool_calls_made += len(tool_results)
-                    # Feed tool results back as the next prompt
-                    current_prompt = (
+                    # Feed tool results back as the next message
+                    tool_result_text = (
                         "Tool execution results:\n\n"
                         + "\n\n".join(tool_results)
                         + "\n\nContinue working on the task. "
                         "If you are done, provide your final summary."
                     )
+                    messages.append({"role": "user", "content": tool_result_text})
                 else:
                     # No tool calls detected — ask the agent to continue or finish
                     if iteration < max_iterations:
-                        current_prompt = (
-                            "No tool calls were detected in your response. "
-                            "If you are finished, say so clearly. "
-                            "Otherwise, use a tool to make progress."
-                        )
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "No tool calls were detected in your response. "
+                                "If you are finished, say so clearly. "
+                                "Otherwise, use a tool to make progress."
+                            ),
+                        })
 
         except Exception as exc:
             error_msg = str(exc)
