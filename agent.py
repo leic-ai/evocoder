@@ -521,27 +521,46 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
         return final_response
 
     def _try_evolve(self, category: str):
-        failures = self.tracker.get_failure_analysis(category, limit=10)
-        if not failures:
+        # Get failed tasks from tracker
+        failed_tasks = self.tracker.failed_tasks(n=10)
+        if not failed_tasks:
             return
+
+        # Convert to analysis format
+        failures = []
+        for task in failed_tasks:
+            failures.append({
+                "task": task.description,
+                "category": task.category,
+                "errors": task.errors,
+                "tools_used": task.tools_used,
+            })
+
         current_prompt = self._build_system_prompt(category)
-        result = self.evolver.analyze_and_evolve(category, current_prompt, failures)
-        if result:
-            confidence = result.get("confidence", 0)
-            if confidence >= self.evo_confidence:
-                self.evolver.accept_evolution(category)
-                print(f"  [Evolution] Auto-accepted (confidence: {confidence:.0%})")
+        result = self.evolver.analyze_and_evolve(force=False)
+        if result and result.get("evolution_proposed"):
+            # Auto-accept if confidence is high enough
+            version_id = result.get("version_id")
+            if version_id:
+                self.evolver.accept_evolution(version_id)
+                print(f"  [Evolution] Auto-accepted new prompt version")
             else:
-                print(f"  [Evolution] Pending review (confidence: {confidence:.0%})")
+                print(f"  [Evolution] Proposed changes pending review")
 
     def get_stats(self) -> dict:
         tools = self.registry.list_tools()
         exp_stats = self.memory.get_experience_stats()
 
+        # Calculate success rate from outcomes
+        outcomes = exp_stats.get("outcomes", {})
+        total_tasks = exp_stats.get("total", 0)
+        success_count = outcomes.get("success", 0)
+        success_rate = success_count / total_tasks if total_tasks > 0 else 0
+
         return {
             "tools": tools,
-            "total_experiences": exp_stats.get("total", 0),
-            "success_rate": exp_stats.get("success_rate", 0),
+            "total_experiences": total_tasks,
+            "success_rate": success_rate,
             "pitfall_count": len(self.error_memory.errors),
             "user_task_count": self.user_prefs.prefs.get("task_count", 0),
             "strategy_stats": self.strategy_memory.get_stats(),
