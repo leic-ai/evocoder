@@ -372,6 +372,19 @@ class SubAgentManager:
             "by_type": by_type,
         }
 
+    def list_types(self) -> List[Dict[str, Any]]:
+        """List available sub-agent types and their capabilities."""
+        types = []
+        for agent_type, config in _AGENT_CONFIGS.items():
+            types.append({
+                "name": agent_type.value,
+                "description": config["system_prompt"].split("\n")[0][:60],
+                "tools_count": len(config["tools"]),
+                "max_iterations": config["max_iterations"],
+                "icon": {"code": "💻", "debug": "🔍", "research": "📚", "file": "📁", "general": "🔧"}.get(agent_type.value, "🤖"),
+            })
+        return types
+
     # ------------------------------------------------------------------
     # Internal: agent loop
     # ------------------------------------------------------------------
