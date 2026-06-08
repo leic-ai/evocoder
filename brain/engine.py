@@ -141,7 +141,18 @@ class Brain:
             try:
                 response = self.client.chat.completions.create(**kwargs)
                 self.token_cache.update_stats(response)
-                return response.choices[0].message
+                # Create a wrapper that includes usage info
+                message = response.choices[0].message
+                # Add usage info to the message object
+                if hasattr(response, 'usage') and response.usage:
+                    message._usage = {
+                        'prompt_tokens': response.usage.prompt_tokens or 0,
+                        'completion_tokens': response.usage.completion_tokens or 0,
+                        'total_tokens': response.usage.total_tokens or 0,
+                    }
+                else:
+                    message._usage = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
+                return message
             except Exception as e:
                 last_error = e
                 error_type = type(e).__name__

@@ -352,10 +352,11 @@ def cmd_sdd(agent, arg: str):
 
 
 def cmd_token(agent):
-    """Show token cache statistics."""
+    """Show token cache statistics and billing."""
     stats = agent.brain.token_cache.get_stats()
-    console.print(box_title("TOKEN CACHE", "bold bright_cyan"))
+    console.print(box_title("TOKEN CACHE & BILLING", "bold bright_cyan"))
 
+    # Cache stats
     t = Table(box=box.ROUNDED, border_style="bright_cyan", show_header=False, padding=(0, 2))
     t.add_column("Metric", style="bold")
     t.add_column("Value", justify="right")
@@ -365,8 +366,22 @@ def cmd_token(agent):
     t.add_row("Input Tokens", f"{stats['total_input_tokens']:,}")
     t.add_row("Output Tokens", f"{stats['total_output_tokens']:,}")
     t.add_row("Saved Tokens", f"{stats['saved_tokens']:,}")
-    t.add_row("Saved Cost", f"¥{stats['saved_cost']:.4f}")
     console.print(t)
+
+    # Billing (DeepSeek V4 Pro pricing)
+    input_cost = stats['total_input_tokens'] * 2 / 1_000_000  # ¥2/M tokens
+    output_cost = stats['total_output_tokens'] * 8 / 1_000_000  # ¥8/M tokens
+    cache_saved = stats['cache_hits'] * 1.5 / 1_000_000  # ¥1.5/M saved
+    total_cost = input_cost + output_cost - cache_saved
+
+    t2 = Table(box=box.ROUNDED, border_style="bright_green", show_header=False, padding=(0, 2))
+    t2.add_column("Item", style="bold")
+    t2.add_column("Cost", justify="right")
+    t2.add_row("Input Cost", f"¥{input_cost:.4f}")
+    t2.add_row("Output Cost", f"¥{output_cost:.4f}")
+    t2.add_row("Cache Saved", f"-¥{cache_saved:.4f}")
+    t2.add_row("Total Cost", f"¥{total_cost:.4f}")
+    console.print(t2)
     console.print(box_subtitle("─" * 20))
 
 

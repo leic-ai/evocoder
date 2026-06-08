@@ -354,11 +354,28 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
         final_response = ""
         error_msg = ""
         all_tool_calls = []
+        total_think_time = 0.0
+        total_tokens_in = 0
+        total_tokens_out = 0
 
         while iteration < self.max_iterations:
             iteration += 1
+            import time as _time
+
+            # Thinking visualization
+            print(f"\n{'─'*50}")
+            print(f"  [Step {iteration}] 🤔 Thinking...")
+            start_think = _time.time()
 
             response = self.brain.think(messages, tools if tools else None)
+
+            think_time = _time.time() - start_think
+            total_think_time += think_time
+
+            # Track tokens from response
+            if hasattr(response, '_usage'):
+                total_tokens_in += response._usage.get('prompt_tokens', 0)
+                total_tokens_out += response._usage.get('completion_tokens', 0)
 
             if not response.tool_calls:
                 final_response = response.content or ""
@@ -369,9 +386,8 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
                 )
                 break
 
-            print(f"\n{'─'*50}")
-            print(f"  [Step {iteration}]")
             print(f"{'─'*50}")
+            print(f"  [Step {iteration}] ⚡ Thought in {think_time:.1f}s")
             if response.content:
                 print(f"  >> {response.content[:200]}")
 
@@ -401,7 +417,7 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
 
                 print(f"  >> Tool: {tool_name}({json.dumps(tool_args, ensure_ascii=False)[:100]})")
 
-                result = self.registry.execute(tool_name, tool_args)
+                result = self.registry.execute(tool_name, **tool_args)
                 is_error = result.startswith("[ERR:")
 
                 if len(result) > 4000:
@@ -491,6 +507,16 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
             summary=f"[{category}] {user_input[:100]} → {final_response[:100]}",
             tags=[category],
         )
+
+        # Print summary with thinking time and token usage
+        print(f"\n{'─'*50}")
+        print(f"  📊 Summary")
+        print(f"  ⏱️  Think time: {total_think_time:.1f}s")
+        print(f"  📥 Tokens in: {total_tokens_in:,}")
+        print(f"  📤 Tokens out: {total_tokens_out:,}")
+        if total_think_time > 0:
+            print(f"  ⚡ Speed: {total_tokens_out/total_think_time:.0f} tok/s")
+        print(f"{'─'*50}")
 
         return final_response
 
