@@ -495,21 +495,16 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
 
     def get_stats(self) -> dict:
         tools = self.registry.list_tools()
-        experiences = self.memory.load_experiences(limit=1000)
-        category_stats = self.tracker.get_category_stats()
-
-        total_tasks = len(experiences)
-        success_tasks = sum(1 for e in experiences if e.get("success"))
-        success_rate = success_tasks / total_tasks if total_tasks > 0 else 0
+        exp_stats = self.memory.get_experience_stats()
 
         return {
             "tools": tools,
-            "total_experiences": total_tasks,
-            "success_rate": success_rate,
-            "pitfall_count": len(self.error_memory.patterns),
-            "user_task_count": self.user_prefs.prefs["task_count"],
-            "strategy_stats": self.strategy_memory.get_all_stats(),
-            "subagent_stats": self.subagents.get_stats(),
+            "total_experiences": exp_stats.get("total", 0),
+            "success_rate": exp_stats.get("success_rate", 0),
+            "pitfall_count": len(self.error_memory.errors),
+            "user_task_count": self.user_prefs.prefs.get("task_count", 0),
+            "strategy_stats": self.strategy_memory.get_stats(),
+            "subagent_stats": self.subagents.stats(),
         }
 
     def get_evolution_status(self) -> dict:

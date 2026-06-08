@@ -95,15 +95,13 @@ def cmd_stats(agent):
         t2.add_column("Category", style="bold")
         t2.add_column("Tasks", justify="right")
         t2.add_column("Success", justify="right")
-        t2.add_column("Avg Steps", justify="right")
-        t2.add_column("Top Tools")
+        t2.add_column("Avg Duration", justify="right")
         for cat, s in strat.items():
-            tools_str = ", ".join(t[0] for t in s.get("top_tools", []))
-            sr = s["success_rate"]
+            sr = s.get("success_rate", 0)
             sr_style = "green" if sr >= 0.8 else "yellow" if sr >= 0.6 else "red"
-            t2.add_row(cat, str(s["total"]),
+            t2.add_row(cat, str(s.get("total_tasks", 0)),
                        f"[{sr_style}]{sr:.0%}[/{sr_style}]",
-                       str(s["avg_iterations"]), tools_str)
+                       f"{s.get('avg_duration', 0):.1f}s")
         console.print(t2)
 
     # Sub-agent stats
@@ -204,52 +202,48 @@ def cmd_evolve(agent, arg: str = ""):
 
 
 def cmd_memory(agent):
-    stats = agent.long_term.get_stats()
+    stats = agent.long_term.summary()
     console.print(box_title("LONG-TERM MEMORY", "bold bright_green"))
 
     t = Table(box=box.ROUNDED, border_style="bright_green",
               show_header=False, padding=(0, 2))
     t.add_column("Metric", style="bold")
     t.add_column("Value")
-    t.add_row("User", stats["user_name"])
-    t.add_row("Total Tasks", str(stats["task_count"]))
-    t.add_row("Sessions", str(stats["session_count"]))
-    t.add_row("Topics", str(stats["topic_count"]))
-    t.add_row("Learned Patterns", str(stats["pattern_count"]))
-    t.add_row("Memorable Moments", str(stats["moment_count"]))
+    t.add_row("User", stats["user"]["name"] or "Anonymous")
+    t.add_row("Visit Count", str(stats["user"]["visit_count"]))
+    t.add_row("Sessions", str(stats["sessions"]["total"]))
+    t.add_row("Learned Facts", str(stats["learned"]["total_facts"]))
     console.print(t)
 
-    tags = agent.long_term.user.get("tags", [])
+    tags = stats["user"].get("tags", [])
     if tags:
         console.print(f"  [dim]╭──[/dim] [bright_green]Tags: {', '.join(tags)}[/bright_green] [dim]──╮[/dim]")
-
-    topics = agent.long_term.history.get("topics", {})
-    if topics:
-        top_topics = sorted(topics.items(), key=lambda x: -x[1])[:5]
-        topics_str = ", ".join(f"{t[0]}({t[1]})" for t in top_topics)
-        console.print(f"  [dim]╭──[/dim] Topics: {topics_str} [dim]──╮[/dim]")
 
     console.print(box_subtitle("─" * 20))
 
 
 def cmd_pitfalls(agent):
-    pitfalls = agent.error_memory.get_common_pitfalls(10)
+    summary = agent.error_memory.get_pitfall_summary()
     console.print(box_title("KNOWN PITFALLS", "bold red"))
-    if not pitfalls:
+    if summary.get("total_errors", 0) == 0:
         console.print(f"  [dim]│[/dim]  No known pitfalls yet. Keep going!")
         console.print(box_subtitle("─" * 20))
         return
+
     t = Table(box=box.ROUNDED, border_style="red",
               title="[bold red]⚠ Pitfalls ⚠[/bold red]",
               title_style="bold", padding=(0, 2))
-    t.add_column("Error", style="bold red")
-    t.add_column("Feature")
-    t.add_column("Fix")
-    t.add_column("Hits", justify="right")
-    for p in pitfalls:
-        t.add_row(p["error_type"], p["code_feature"][:35],
-                  p["fix_applied"][:50], str(p["hit_count"]))
+    t.add_column("Error Type", style="bold red")
+    t.add_column("Count", justify="right")
+    for etype, count in summary.get("error_types", {}).items():
+        t.add_row(etype, str(count))
     console.print(t)
+
+    tips = summary.get("tips", [])
+    if tips:
+        console.print(f"  [dim]╭──[/dim] [yellow]Tips[/yellow] [dim]──╮[/dim]")
+        for tip in tips[:3]:
+            console.print(f"  [dim]│[/dim]  {tip}")
     console.print(box_subtitle("─" * 20))
 
 
@@ -261,22 +255,22 @@ def cmd_prefs(agent):
               show_header=False, padding=(0, 2))
     t.add_column("Setting", style="bold")
     t.add_column("Value")
-    t.add_row("Tasks Processed", str(prefs["task_count"]))
-    t.add_row("Language", prefs["language"])
-    t.add_row("Indent", prefs["code_style"]["indent"])
-    t.add_row("Quotes", prefs["code_style"]["quotes"])
-    t.add_row("Verbosity", prefs["verbosity"])
-    for cat, libs in prefs["lib_preferences"].items():
+    t.add_row("Tasks Processed", str(prefs.get("task_count", 0)))
+    t.add_row("Language", prefs.get("language", "python"))
+    t.add_row("Indent", prefs.get("indent_style", "spaces"))
+    t.add_row("Quotes", prefs.get("quote_style", "double"))
+    t.add_row("Verbosity", prefs.get("verbosity", "medium"))
+    for cat, libs in prefs.get("preferred_libraries", {}).items():
         if libs:
-            top = max(libs, key=libs.get)
-            t.add_row(f"Lib: {cat}", f"{top} ({libs[top]}x)")
+            top = max(libs, key=libs.get) if isinstance(libs, dict) else str(libs)
+            t.add_row(f"Lib: {cat}", f"{top}")
     console.print(t)
 
-    if prefs["positive_patterns"]:
+    if prefs.get("positive_patterns"):
         console.print(f"  [dim]╭──[/dim] [success][+] Positive patterns[/success] [dim]──╮[/dim]")
         for p in prefs["positive_patterns"][-5:]:
             console.print(f"  [dim]│[/dim]      {p}")
-    if prefs["negative_patterns"]:
+    if prefs.get("negative_patterns"):
         console.print(f"  [dim]╭──[/dim] [error][-] Negative patterns[/error] [dim]──╮[/dim]")
         for p in prefs["negative_patterns"][-5:]:
             console.print(f"  [dim]│[/dim]      {p}")

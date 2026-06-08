@@ -39,6 +39,8 @@ logger = logging.getLogger("evocoder.evolution.user_prefs")
 # ---------------------------------------------------------------------------
 
 _DEFAULT_PREFS: dict = {
+    "task_count": 0,
+    "language": "python",
     "indent_style": "spaces",
     "indent_width": 4,
     "quote_style": "double",
@@ -55,6 +57,12 @@ _DEFAULT_PREFS: dict = {
     "blank_lines_top_level": 2,
     "blank_lines_inner": 1,
     "trailing_newline": True,
+    "verbosity": "medium",
+    "code_style": {"indent": "spaces_4", "quotes": "double"},
+    "lib_preferences": {},
+    "feedback_history": [],
+    "positive_patterns": [],
+    "negative_patterns": [],
 }
 
 
