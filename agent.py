@@ -252,7 +252,17 @@ class EvoCoder:
         # Layer 1: Pitfall warnings
         pitfall_summary = self.error_memory.get_pitfall_summary()
         if pitfall_summary:
-            sections.append(pitfall_summary)
+            # Convert dict to string if needed
+            if isinstance(pitfall_summary, dict):
+                if pitfall_summary.get("total_errors", 0) > 0:
+                    lines = [f"[Known Pitfalls - {pitfall_summary['total_errors']} errors recorded]"]
+                    for etype, count in pitfall_summary.get("error_types", {}).items():
+                        lines.append(f"  - {etype}: {count} occurrences")
+                    for tip in pitfall_summary.get("tips", [])[:3]:
+                        lines.append(f"  - Tip: {tip}")
+                    sections.append("\n".join(lines))
+            else:
+                sections.append(str(pitfall_summary))
 
         # Layer 2: User preferences
         style_prompt = self.user_prefs.get_style_prompt()
@@ -287,9 +297,9 @@ IMPROVEMENT: <how to do better next time>
 PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
 
         try:
-            messages = [{"role": "user", "content": prompt}]
-            response = self.brain.think(messages, tools=None)
-            return {"reflection": response.content, "success": success}
+            response = self.brain.think(prompt)
+            content = response.content if hasattr(response, 'content') else str(response)
+            return {"reflection": content, "success": success}
         except Exception:
             return {"reflection": "", "success": success}
 
@@ -316,13 +326,14 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
         system_prompt = self._build_system_prompt(category)
         self.brain.system_prompt = system_prompt
 
-        prompt_version = f"v{len(self.evolver.get_evolution_history(category))}"
-        task_id = self.tracker.start_task(
-            task=user_input, category=category, prompt_version=prompt_version,
+        prompt_version = f"v{len(self.evolver.get_evolution_history())}"
+        task_record = self.tracker.start_task(
+            category=category, description=user_input,
         )
+        task_id = task_record.id if hasattr(task_record, 'id') else str(task_record)
 
-        strategy = self.strategy_memory.get_strategy(category)
-        self.memory.add_message("user", user_input)
+        strategy = self.strategy_memory.best_strategy_for(category)
+        self.memory.add_conversation("user", user_input)
 
         experiences = self.memory.get_similar_experiences(user_input)
         context_prefix = ""
@@ -332,7 +343,7 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
                 status = "[OK]" if exp["success"] else "[FAIL]"
                 context_prefix += f"{status} {exp['task']} -> {exp.get('error', 'success')}\n"
 
-        messages = self.memory.get_messages()
+        messages = self.memory.get_recent_conversation()
         if context_prefix:
             messages[-1] = {"role": "user", "content": messages[-1]["content"] + context_prefix}
 
@@ -350,10 +361,10 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
 
             if not response.tool_calls:
                 final_response = response.content or ""
-                self.memory.add_message("assistant", final_response)
+                self.memory.add_conversation("assistant", final_response)
                 self.tracker.log_step(
-                    step=iteration, action="final_response",
-                    result=final_response[:500], success=True,
+                    task_id=task_id, action="final_response",
+                    details={"result": final_response[:500]},
                 )
                 break
 
@@ -409,10 +420,9 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
                 self.tool_evolver.record_tool_call(tool_name, tool_args, not is_error)
 
                 self.tracker.log_step(
-                    step=iteration, action="tool_call",
-                    tool_name=tool_name, tool_args=tool_args,
-                    result=result, success=not is_error,
-                    error=result if is_error else "",
+                    task_id=task_id, action="tool_call",
+                    details={"tool_name": tool_name, "tool_args": tool_args, "result": result[:500]},
+                    tool=tool_name, is_error=is_error,
                 )
 
                 messages.append({
@@ -424,14 +434,18 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
         else:
             final_response = "[WARN] Max iterations reached. Task may be incomplete."
             error_msg = "max_iterations_reached"
-            self.memory.add_message("assistant", final_response)
+            self.memory.add_conversation("assistant", final_response)
 
         success = not error_msg and "[WARN]" not in final_response
 
         tools_used = list(set(all_tool_calls))
-        self.memory.save_experience(
-            task=user_input, result=final_response[:500],
-            success=success, tools_used=tools_used, error=error_msg,
+        self.memory.record_experience(
+            task=user_input,
+            category=category,
+            outcome="success" if success else "failure",
+            solution=final_response[:500],
+            errors=[error_msg] if error_msg else None,
+            tags=tools_used,
         )
 
         self.tracker.end_task(success=success, final_response=final_response, error=error_msg)
