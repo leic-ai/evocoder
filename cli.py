@@ -578,7 +578,7 @@ def main():
             result = agent.run(user_input)
             elapsed = time.time() - start_time
             console.print()
-            console.print(Panel(result, title="[agent]🤖 EvoCoder[/agent]",
+            console.print(Panel(result,
                                 border_style="bright_cyan", padding=(1, 2)))
 
             # ── Brewed footer (like Claude Code) ──
