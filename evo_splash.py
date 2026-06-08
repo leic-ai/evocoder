@@ -40,7 +40,7 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION = "0.6.0"
+VERSION = "0.7.1"
 
 # Whale — 10 lines of Braille / pixel block art
 WHALE_ART = [

@@ -4,6 +4,7 @@
 import os
 import sys
 import json
+import time
 import argparse
 from pathlib import Path
 from rich.console import Console
@@ -27,6 +28,10 @@ theme = Theme({
     "agent": "bold bright_cyan",
     "tool": "dim cyan",
     "evolve": "bold magenta",
+    "brew": "dim bright_white",
+    "token": "dim cyan",
+    "cache_hit": "green",
+    "cache_miss": "yellow",
 })
 
 console = Console(theme=theme)
@@ -385,6 +390,61 @@ def cmd_token(agent):
     console.print(box_subtitle("─" * 20))
 
 
+def _print_brewed_footer(agent, elapsed: float):
+    """Print Claude Code style 'Brewed' footer with timing and token stats."""
+    # Format elapsed time
+    if elapsed < 1:
+        time_str = f"{elapsed:.1f}s"
+    elif elapsed < 60:
+        time_str = f"{elapsed:.0f}s"
+    else:
+        mins = int(elapsed // 60)
+        secs = int(elapsed % 60)
+        time_str = f"{mins}m{secs}s"
+
+    # Get token stats
+    try:
+        token_stats = agent.brain.token_cache.get_stats()
+        cache_hits = token_stats.get("cache_hits", 0)
+        cache_misses = token_stats.get("cache_misses", 0)
+        total_input = token_stats.get("total_input_tokens", 0)
+        total_output = token_stats.get("total_output_tokens", 0)
+        hit_rate = token_stats.get("hit_rate", 0)
+
+        # Format token counts
+        if total_input > 1000:
+            input_str = f"{total_input/1000:.1f}k"
+        else:
+            input_str = str(total_input)
+
+        if total_output > 1000:
+            output_str = f"{total_output/1000:.1f}k"
+        else:
+            output_str = str(total_output)
+
+        # Build footer using markup string (avoids append_text issues)
+        if cache_hits > 0:
+            cache_part = f"[green]{cache_hits} hits[/green] [dim]({hit_rate:.0%})[/dim]"
+        else:
+            cache_part = f"[yellow]{cache_misses} misses[/yellow]"
+
+        footer_str = (
+            f"  [bright_white]*[/bright_white] "
+            f"[brew]Brewed for {time_str}[/brew]"
+            f"  [dim]|[/dim]  "
+            f"[token]{input_str} in / {output_str} out[/token]"
+            f"  [dim]|[/dim]  "
+            f"[dim]Cache:[/dim] {cache_part}"
+        )
+
+        console.print()
+        console.print(footer_str)
+    except Exception:
+        # Fallback if token stats not available
+        console.print()
+        console.print(f"  [bright_white]*[/bright_white] [brew]Brewed for {time_str}[/brew]")
+
+
 def cmd_help():
     console.print(box_title("HELP", "bold bright_cyan"))
     commands = [
@@ -514,10 +574,15 @@ def main():
         # Run agent
         try:
             console.print()
+            start_time = time.time()
             result = agent.run(user_input)
+            elapsed = time.time() - start_time
             console.print()
             console.print(Panel(result, title="[agent]🤖 EvoCoder[/agent]",
                                 border_style="bright_cyan", padding=(1, 2)))
+
+            # ── Brewed footer (like Claude Code) ──
+            _print_brewed_footer(agent, elapsed)
         except KeyboardInterrupt:
             console.print("\n  [warning]Interrupted.[/warning]")
         except Exception as e:
