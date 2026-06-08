@@ -89,7 +89,7 @@ class EvoCoder:
             retry_delay=api_cfg.get("retry_delay", 2),
             timeout=api_cfg.get("timeout", 120),
         )
-        self.memory = MemoryStore(data_dir=f"{self.workspace}/memory")
+        self.memory = MemoryStore(data_dir=f"{self.workspace}/memory", enable_vectors=False)
         self.registry = ToolRegistry()
         register_builtins(self.registry)
         self.max_iterations = agent_cfg["max_iterations"]
@@ -340,8 +340,9 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
         if experiences:
             context_prefix = "\n\n[Related experience]\n"
             for exp in experiences[:3]:
-                status = "[OK]" if exp["success"] else "[FAIL]"
-                context_prefix += f"{status} {exp['task']} -> {exp.get('error', 'success')}\n"
+                outcome = exp.get("outcome", "unknown")
+                status = "[OK]" if outcome == "success" else "[FAIL]"
+                context_prefix += f"{status} {exp.get('task', 'N/A')} -> {outcome}\n"
 
         messages = self.memory.get_recent_conversation()
         if context_prefix:
@@ -448,15 +449,17 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
             tags=tools_used,
         )
 
-        self.tracker.end_task(success=success, final_response=final_response, error=error_msg)
+        from evolution.tracker import TaskStatus
+        status = TaskStatus.SUCCESS if success else TaskStatus.FAILURE
+        self.tracker.end_task(task_id=task_id, status=status, result=final_response[:500])
 
         self.strategy_memory.record_task_result(
-            task_type=category, success=success,
-            iterations=iteration, tools_used=tools_used,
-            strategy_used=strategy,
+            category=category, success=success,
+            task_description=user_input[:200],
         )
 
-        if not success or (self.strategy_memory.stats.get(category, {}).get("total", 0) % 5 == 0):
+        strategy_stats = self.strategy_memory.get_stats()
+        if not success or (strategy_stats.get(category, {}).get("total_tasks", 0) % 5 == 0):
             print(f"\n  [Self-Reflect] Analyzing performance...")
             reflection = self._self_reflect(user_input, final_response, success, error_msg)
             parsed = self._parse_reflection(reflection.get("reflection", ""))
@@ -486,10 +489,8 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
 
         self.long_term.add_session(
             summary=f"[{category}] {user_input[:100]} → {final_response[:100]}",
-            topics=[category],
-            memorable=user_input[:100] if success else None,
+            tags=[category],
         )
-        self.long_term.save_all()
 
         return final_response
 
