@@ -335,22 +335,19 @@ class LongTermMemory:
         visit_count = self._user.get("visit_count", 0)
 
         # --- Easter egg ---
-        if "丑鲸鱼" in str(tags):
-            return (
-                "✨ 丑鲸鱼大人陋临！小的有眼不识泰山！"
-                "请问今天要拆哪度天？ ✨"
-            )
+        if "ugly-whale" in str(tags):
+            return "✨ The Ugly Whale has arrived! What shall we conquer today? ✨"
 
         # --- First visit ---
         if visit_count <= 1:
             if name:
-                return f"你好，{name}！欢迎使用 EvoCoder，有什么我能帮忙的？"
-            return "你好！欢迎使用 EvoCoder，有什么我能帮忙的？"
+                return f"Hi {name}! Welcome to EvoCoder. How can I help?"
+            return "Hi! Welcome to EvoCoder. How can I help?"
 
         # --- Returning user ---
         if name:
-            return f"欢迎回来，{name}！这是你的第 {visit_count} 次访问。有什么需要帮助的吗？"
-        return f"欢迎回来！这是你的第 {visit_count} 次访问。有什么需要帮助的吗？"
+            return f"Welcome back, {name}! This is your {visit_count}th visit. What can I do for you?"
+        return f"Welcome back! This is your {visit_count}th visit. What can I do for you?"
 
     # ===================================================================
     # System prompt context injection
