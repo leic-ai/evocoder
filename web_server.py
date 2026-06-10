@@ -368,7 +368,15 @@ class EvoServer:
             print(f"[WS] Client disconnected: {remote}")
 
     async def _handle_list_files(self, ws, path: str):
-        """列出目录文件"""
+        """List files in a directory for the file browser panel.
+
+        Skips hidden files and __pycache__. Returns a list of file entries
+        with name, path, is_dir, and size fields.
+
+        Args:
+            ws: WebSocket connection.
+            path: Directory path to list ("." for current working directory).
+        """
         import os
         target = Path(path).resolve() if path != "." else Path.cwd()
         if not target.is_dir():
@@ -390,7 +398,15 @@ class EvoServer:
         await self._send(ws, {"type": "file_list", "files": files})
 
     async def _handle_read_file(self, ws, path: str):
-        """读取文件内容"""
+        """Read a file and send its content to the frontend.
+
+        Large files are truncated to 50K chars. Content is sent as UTF-8
+        with replacement characters for invalid bytes.
+
+        Args:
+            ws: WebSocket connection.
+            path: File path to read.
+        """
         if not path:
             await self._send(ws, {"type": "error", "message": "No path provided"})
             return
@@ -408,7 +424,17 @@ class EvoServer:
             await self._send(ws, {"type": "error", "message": str(e)})
 
     async def _handle_run_code(self, ws, code: str, lang: str, file: str):
-        """运行代码"""
+        """Execute code from the GUI and return stdout/stderr/exit_code.
+
+        Supports Python, JavaScript (Node.js), and Bash. Code is written to
+        a temp file, executed with a 30s timeout, and the temp file is cleaned up.
+
+        Args:
+            ws: WebSocket connection.
+            code: Source code string to execute.
+            lang: Language identifier ("python", "javascript", "bash").
+            file: Original filename (used to infer language if lang is empty).
+        """
         import subprocess, sys, tempfile
         if not code:
             await self._send(ws, {"type": "error", "message": "No code to run"})

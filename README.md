@@ -1,6 +1,8 @@
-# EvoCoder v0.6.0
+# EvoCoder v0.7.0
 
-A self-evolving programming agent powered by **DeepSeek V4 Pro**. EvoCoder learns from every task it executes -- refining its system prompt, remembering past errors, adapting strategies to your coding style, and even generating new composite tools from usage patterns. The longer you use it, the better it gets.
+A self-evolving programming agent powered by **MiMo v2.5 Pro** (OpenAI-compatible). EvoCoder learns from every task it executes -- refining its system prompt, remembering past errors, adapting strategies to your coding style, and even generating new composite tools from usage patterns. The longer you use it, the better it gets.
+
+> **v0.7.0**: MiMo API support, memory overflow fix, syntax highlighting, code execution, file browser.
 
 ```
                         ████████████
@@ -18,7 +20,7 @@ A self-evolving programming agent powered by **DeepSeek V4 Pro**. EvoCoder learn
 ██       ██    ██ ██
 █████    ██    ██ ██   ███
 ██        ██  ██  ██    ██
-███████   ████    ██████       v0.6.0
+███████   ████    ██████       v0.7.0
 ```
 
 ---
@@ -72,13 +74,20 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# Edit .env and set DEEPSEEK_API_KEY=your_key_here
+# Edit .env and set MIMO_API_KEY=your_key_here
+# Get your key from https://platform.xiaomimimo.com
+```
+
+Or use DeepSeek:
+
+```bash
+# Also supports DeepSeek: set DEEPSEEK_API_KEY in .env
 ```
 
 Or export directly:
 
 ```bash
-export DEEPSEEK_API_KEY=sk-xxxxxxxx
+export MIMO_API_KEY=sk-xxxxxxxx
 ```
 
 ### 3. Configure (optional)
@@ -88,8 +97,8 @@ Edit `config.json` to adjust model, timeouts, and evolution thresholds:
 ```json
 {
   "api": {
-    "base_url": "https://api.deepseek.com",
-    "model": "deepseek-v4-pro",
+    "base_url": "https://api.xiaomimimo.com/v1",
+    "model": "mimo-v2.5-pro",
     "max_retries": 3,
     "timeout": 120
   },
@@ -315,7 +324,7 @@ EvoCoder/
 
 ## Key Design Decisions
 
-**OpenAI-compatible API**: Uses the `openai` Python SDK pointed at DeepSeek's endpoint. Swap to any OpenAI-compatible provider by changing `base_url` in `config.json`.
+**OpenAI-compatible API**: Uses the `openai` Python SDK. Default provider is MiMo v2.5 Pro. Swap to any OpenAI-compatible provider (DeepSeek, OpenAI, etc.) by changing `base_url` and `model` in `config.json`.
 
 **Graceful degradation**: Every optional dependency (ChromaDB, pandas, pyautogui, Pillow) is handled with try/except -- the agent works with just `openai` and `rich`, losing only vector search, data processing, desktop automation, and screenshot capture.
 

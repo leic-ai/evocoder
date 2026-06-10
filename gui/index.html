@@ -482,7 +482,9 @@ function updateLiveStats(){if(!streaming)return;const elapsed=(Date.now()-stream
 function updateCtxBar(){const s=getActive();const used=s?s.messages.length:0;const pct=Math.min(100,Math.round(used/MAX_CONTEXT*100));const fill=document.getElementById('ctxFill');fill.style.width=pct+'%';fill.className='context-fill'+(pct>80?' full':pct>60?' warn':'');document.getElementById('ctxText').textContent=pct+'%'}
 
 // ── Code Panel ──
+// Switch between Code / Tools / Terminal tabs
 function switchCodeTab(tab){codeTab=tab;document.querySelectorAll('.code-tab').forEach(b=>b.classList.toggle('active',b.textContent.toLowerCase()===tab));renderCode()}
+// Render code blocks with highlight.js syntax highlighting, Run buttons, and line numbers
 function renderCode(){
   codeBody.innerHTML='';
   if(codeTab==='code'){
@@ -519,7 +521,8 @@ function renderCode(){
 function copyCode(btn,id){const b=codeBlocks.find(b=>b.id===id);if(!b)return;navigator.clipboard.writeText(b.content);btn.textContent='✓';btn.classList.add('done');setTimeout(()=>{btn.textContent='Copy';btn.classList.remove('done')},1200)}
 function guessLang(f){const ext=f.split('.').pop().toLowerCase();return{py:'python',js:'javascript',ts:'typescript',jsx:'javascript',tsx:'typescript',html:'html',css:'css',json:'json',md:'markdown',sh:'bash',sql:'sql',java:'java',go:'go',rs:'rust',c:'c',cpp:'cpp',h:'c',yml:'yaml',yaml:'yaml',toml:'toml',xml:'xml',rb:'ruby',php:'php',swift:'swift',kt:'kotlin'}[ext]||'text'}
 
-// ── 代码运行 ──
+// ── Code Execution ──
+// Send code to backend for execution, switch to Terminal tab to show output
 function runCode(id){
   const b=codeBlocks.find(b=>b.id===id);if(!b||!ws||ws.readyState!==WebSocket.OPEN)return;
   // 切换到终端 tab
@@ -539,9 +542,12 @@ function showRunResult(stdout,stderr,exit_code){
   }
 }
 
-// ── 文件树 ──
+// ── File Tree ──
+// Toggle file tree panel visibility, load data on first open
 function toggleFileTree(){document.getElementById('fileTreePanel').classList.toggle('collapsed');if(ws&&ws.readyState===WebSocket.OPEN&&!fileTreeData)ws.send(JSON.stringify({type:'list_files'}))}
+// Request file list from backend
 function loadFileTree(){if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'list_files'}))}
+// Render file tree from backend response — dirs are collapsible with lazy-loading
 function renderFileTree(files){
   fileTreeData=files;
   const body=document.getElementById('fileTreeBody');

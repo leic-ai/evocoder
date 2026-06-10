@@ -1,7 +1,26 @@
 """Agent — EvoCoder core loop
 
-Brain thinks -> picks tool -> Tools execute -> Memory saves
-  -> 3-layer evolution checks -> self-reflect -> repeat
+The main agent orchestrates the think-act-learn cycle:
+
+1. **Perceive**: Load user input + recall relevant memories + project context
+2. **Think**: LLM reasons about the task, selects tools
+3. **Act**: Execute tools, collect results
+4. **Learn**: Record outcomes, evolve prompts, update strategies
+
+Two execution modes:
+  - `run()`         — synchronous, returns final response
+  - `run_stream()`  — generator, yields AgentEvent objects for real-time streaming
+
+Memory safety:
+  - Tool results are truncated to 2000 chars to prevent context overflow
+  - Messages are compressed mid-loop when count exceeds 40
+  - Conversation buffer is a ring buffer (deque, 200 max)
+
+Evolution integration:
+  - EvolutionTracker records every task outcome
+  - PromptEvolver triggers on high failure rates
+  - ErrorMemory suggests fixes for known error patterns
+  - ToolEvolver detects repetitive tool patterns and generates composite tools
 """
 
 import json
@@ -428,7 +447,24 @@ PITFALL: <error type>|<code feature>|<correct fix> (only if failed)"""
         return result
 
     def run(self, user_input: str) -> str:
-        """Execute one full Agent loop with 3-layer evolution."""
+        """Execute one full Agent loop with 3-layer evolution.
+
+        Flow:
+          1. Classify task → build system prompt with category-specific strategy
+          2. Recall similar past experiences for context
+          3. Loop up to max_iterations:
+             a. LLM thinks → picks tool(s)
+             b. Execute tools → append results to messages
+             c. Compress context if messages > 40 (prevents MemoryError)
+             d. If no tool calls → final response
+          4. Record outcome → trigger evolution if failure threshold met
+
+        Args:
+            user_input: The user's task description.
+
+        Returns:
+            The agent's final text response.
+        """
         self.long_term.update_user()
         category = self._classify_task(user_input)
         system_prompt = self._build_system_prompt(category)
