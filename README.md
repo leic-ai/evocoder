@@ -1,5 +1,7 @@
 # EvoCoder v0.7.0
 
+> 🌐 English | [中文](README_zh.md)
+
 A self-evolving programming agent powered by **MiMo v2.5 Pro** (OpenAI-compatible). EvoCoder learns from every task it executes -- refining its system prompt, remembering past errors, adapting strategies to your coding style, and even generating new composite tools from usage patterns. The longer you use it, the better it gets.
 
 > **v0.7.0**: MiMo API support, memory overflow fix, syntax highlighting, code execution, file browser.
@@ -56,7 +58,7 @@ A self-evolving programming agent powered by **MiMo v2.5 Pro** (OpenAI-compatibl
 +=====================================================================+
          |                    |                    |
          v                    v                    v
-   DeepSeek V4 Pro      ChromaDB Vectors      JSONL Disk
+   MiMo v2.5 Pro       ChromaDB Vectors      JSONL Disk
    (OpenAI-compatible)  (semantic search)     (persistence)
 ```
 
@@ -340,7 +342,7 @@ EvoCoder/
 
 | Package | Purpose |
 |---------|---------|
-| `openai` | LLM API client (DeepSeek V4 Pro) |
+| `openai` | LLM API client (MiMo / DeepSeek / OpenAI compatible) |
 | `rich` | Terminal UI (splash screen, tables, panels) |
 | `prompt_toolkit` | Interactive input |
 | `chromadb` | Vector similarity search (optional) |

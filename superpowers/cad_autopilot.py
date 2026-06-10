@@ -1,220 +1,311 @@
 """
-CAD AutoPilot — 一键式 CAD 自动化接口
-让 EvoCoder 能够"看屏幕"并操作 CAD
+CAD AutoPilot — 视觉驱动的 CAD 自动化系统
+
+流程: 截屏 → MiMo 视觉分析 → 生成操作 → 执行 → 重复
+
+就像人类一样：看屏幕 → 思考 → 动手操作
 """
 
-import os
-import sys
 import time
 import json
-from pathlib import Path
-from typing import Optional, Dict, Any
-
-# 添加项目根目录到路径
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from superpowers.vision_engine import VisionEngine
-from superpowers.cad_controller import CADController
+import re
+from typing import Optional, Dict, Any, List
+from vision_engine import VisionEngine
+from cad_controller import CADController
 
 
 class CADAutoPilot:
-    """CAD 自动驾驶仪 - AI 驱动的 CAD 自动化"""
+    """视觉驱动的 CAD 自动化系统"""
     
-    # 默认配置
-    DEFAULT_API_KEY = "sk-coyrt3ynsv5n2yttjza2c0z6dpui199pbi5uoabx6w6dek2g"
-    DEFAULT_BASE_URL = "https://api.xiaomimimo.com/v1"
-    DEFAULT_MODEL = "mimo-v2.5"
+    def __init__(self, api_key: str = None, model: str = None):
+        print("=" * 50)
+        print("  CAD AutoPilot — 视觉驱动自动化系统")
+        print("=" * 50)
+        
+        self.vision = VisionEngine(api_key=api_key, model=model)
+        self.ctrl = CADController()
+        self.goal = ""
+        self.max_steps = 50
+        self.step_delay = 1.0
+        self.verbose = True
+        self.running = False
+        
+        # CAD 软件上下文
+        self.cad_context = {
+            "software": "unknown",
+            "current_tool": None,
+            "objects_created": [],
+        }
+        
+        print("[AutoPilot] ✓ 系统就绪\n")
     
-    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None, model: Optional[str] = None):
-        """初始化 CAD AutoPilot
+    def set_goal(self, goal: str):
+        """设置目标"""
+        self.goal = goal
+        print(f"[AutoPilot] 🎯 目标: {goal}")
+    
+    def look(self) -> str:
+        """看屏幕 — 截屏并分析"""
+        print(f"\n{'='*40}")
+        print(f"[步骤 {self.ctrl.step_count}] 📸 截屏分析中...")
         
-        Args:
-            api_key: MiMo API Key，如果未提供则使用默认值
-            base_url: API 基础 URL
-            model: 视觉模型名称
-        """
-        print("=" * 60)
-        print("🚀 CAD AutoPilot 初始化中...")
-        print("=" * 60)
-        
-        # 初始化视觉引擎
-        self.vision = VisionEngine(
-            api_key=api_key or self.DEFAULT_API_KEY,
-            base_url=base_url or self.DEFAULT_BASE_URL,
-            model=model or self.DEFAULT_MODEL
+        result = self.vision.capture_and_analyze(
+            prompt=self._build_look_prompt(),
+            max_tokens=2000
         )
-        print(f"✓ 视觉引擎就绪 (模型: {self.vision.current_model})")
-        
-        # 初始化 CAD 控制器
-        self.controller = CADController(self.vision)
-        print("✓ CAD 控制器就绪")
-        
-        # 创建工作目录
-        self.workspace = Path("cad_workspace")
-        self.workspace.mkdir(exist_ok=True)
-        
-        print("=" * 60)
-        print("✅ CAD AutoPilot 初始化完成！")
-        print("=" * 60)
-    
-    def see(self) -> Dict[str, Any]:
-        """'看'当前屏幕并返回分析结果"""
-        print("\n📸 正在截图并分析...")
-        screenshot = self.controller.capture_screen("see")
-        result = self.vision.analyze_screenshot(screenshot)
         
         if result.get("success"):
-            print("✓ 识别完成")
-            return result["analysis"]
+            description = result["content"]
+            if self.verbose:
+                print(f"[Vision] 👁️ 看到了: {description[:200]}...")
+            return description
         else:
-            print(f"✗ 识别失败: {result.get('error')}")
-            return {"error": result.get("error")}
+            error = result.get("error", "未知错误")
+            print(f"[Vision] ❌ 分析失败: {error}")
+            return f"分析失败: {error}"
     
-    def find(self, element: str) -> Optional[tuple]:
-        """在屏幕上查找指定元素"""
-        print(f"\n🔍 正在查找: {element}")
-        position = self.controller.find_element(element)
+    def think(self, screen_description: str) -> Dict[str, Any]:
+        """思考 — 基于屏幕内容决定下一步"""
+        prompt = self._build_think_prompt(screen_description)
         
-        if position:
-            print(f"✓ 找到位置: ({position[0]}, {position[1]})")
-        else:
-            print("✗ 未找到该元素")
+        result = self.vision.capture_and_analyze(prompt=prompt, max_tokens=800)
         
-        return position
+        if not result.get("success"):
+            return {"action": "wait", "reason": "分析失败，等待重试"}
+        
+        content = result["content"]
+        
+        # 尝试解析 JSON 操作指令
+        action = self._parse_action(content)
+        if action:
+            return action
+        
+        # 如果解析失败，返回原始内容
+        return {"action": "unknown", "raw": content, "reason": "无法解析操作"}
     
-    def click(self, element_or_x, y: Optional[int] = None):
-        """点击元素或坐标"""
-        if isinstance(element_or_x, str):
-            print(f"\n🖱️ 点击元素: {element_or_x}")
-            success = self.controller.click_element(element_or_x)
-            if success:
-                print("✓ 点击成功")
+    def act(self, action: Dict[str, Any]) -> bool:
+        """执行操作"""
+        act_type = action.get("action", "unknown")
+        reason = action.get("reason", "")
+        
+        print(f"[Action] 🎬 {act_type}: {reason}")
+        
+        try:
+            if act_type == "click":
+                x, y = action.get("x", 0), action.get("y", 0)
+                if x > 0 and y > 0:
+                    self.ctrl.click(x, y)
+                else:
+                    print(f"[Action] ⚠️ 无效坐标 ({x}, {y})")
+                    return False
+            
+            elif act_type == "double_click":
+                x, y = action.get("x", 0), action.get("y", 0)
+                self.ctrl.double_click(x, y)
+            
+            elif act_type == "right_click":
+                x, y = action.get("x", 0), action.get("y", 0)
+                self.ctrl.right_click(x, y)
+            
+            elif act_type == "type":
+                text = action.get("value", "")
+                if text:
+                    self.ctrl.type_text(text)
+            
+            elif act_type == "type_chinese":
+                text = action.get("value", "")
+                if text:
+                    self.ctrl.type_chinese(text)
+            
+            elif act_type == "hotkey":
+                key = action.get("key", "")
+                if "+" in key:
+                    keys = key.split("+")
+                    self.ctrl.hotkey(*keys)
+                else:
+                    self.ctrl.press(key)
+            
+            elif act_type == "drag":
+                x1 = action.get("x1", 0)
+                y1 = action.get("y1", 0)
+                x2 = action.get("x2", 0)
+                y2 = action.get("y2", 0)
+                self.ctrl.drag(x1, y1, x2, y2)
+            
+            elif act_type == "scroll":
+                x = action.get("x", 960)
+                y = action.get("y", 540)
+                amount = action.get("amount", 3)
+                self.ctrl.scroll(x, y, amount)
+            
+            elif act_type == "wait":
+                self.ctrl.wait(1.0)
+            
+            elif act_type == "done":
+                print(f"\n[AutoPilot] ✅ 目标完成！")
+                return True
+            
+            elif act_type == "enter":
+                self.ctrl.enter()
+            
+            elif act_type == "escape":
+                self.ctrl.escape()
+            
+            elif act_type == "tab":
+                self.ctrl.tab()
+            
             else:
-                print("✗ 点击失败 - 未找到元素")
-        else:
-            print(f"\n🖱️ 点击坐标: ({element_or_x}, {y})")
-            self.controller.click_point(element_or_x, y)
-            print("✓ 点击完成")
+                print(f"[Action] ⚠️ 未知操作: {act_type}")
+                return False
+            
+            return False  # 未完成，继续
+            
+        except Exception as e:
+            print(f"[Action] ❌ 执行失败: {e}")
+            return False
     
-    def type(self, text: str, press_enter: bool = True):
-        """输入文字或命令"""
-        print(f"\n⌨️ 输入: {text}")
-        self.controller.type_command(text, press_enter)
-        print("✓ 输入完成")
-    
-    def draw_line(self, start: tuple, end: tuple):
-        """绘制直线"""
-        print(f"\n📏 绘制直线: {start} -> {end}")
-        self.controller.draw_line(start, end)
-        print("✓ 直线绘制完成")
-    
-    def draw_circle(self, center: tuple, radius_point: tuple):
-        """绘制圆"""
-        print(f"\n⭕ 绘制圆: 中心{center}, 半径点{radius_point}")
-        self.controller.draw_circle(center, radius_point)
-        print("✓ 圆绘制完成")
-    
-    def draw_rect(self, corner1: tuple, corner2: tuple):
-        """绘制矩形"""
-        print(f"\n⬜ 绘制矩形: {corner1} -> {corner2}")
-        self.controller.draw_rectangle(corner1, corner2)
-        print("✓ 矩形绘制完成")
-    
-    def undo(self):
-        """撤销操作"""
-        print("\n↩️ 撤销")
-        self.controller.undo()
-    
-    def redo(self):
-        """重做操作"""
-        print("\n↪️ 重做")
-        self.controller.redo()
-    
-    def escape(self):
-        """取消当前操作"""
-        print("\n❌ 取消操作")
-        self.controller.escape()
-    
-    def zoom_all(self):
-        """缩放至全部显示"""
-        print("\n🔍 缩放至全部")
-        self.controller.zoom_extents()
-    
-    def get_state(self) -> Dict[str, Any]:
-        """获取当前 CAD 状态"""
-        screenshot = self.controller.capture_screen("state")
-        return self.vision.get_cad_state(screenshot)
-    
-    def identify_drawing(self) -> Dict[str, Any]:
-        """识别当前绘制的图形"""
-        print("\n🔍 识别图形中...")
-        screenshot = self.controller.capture_screen("identify")
-        return self.vision.identify_drawing(screenshot)
-    
-    def execute(self, task: str) -> Dict[str, Any]:
-        """让 AI 自动执行任务"""
-        print(f"\n🤖 执行任务: {task}")
-        return self.controller.execute_visual_task(task)
-    
-    def history(self):
-        """显示操作历史"""
-        history = self.controller.get_history()
-        print(f"\n📜 操作历史 ({len(history)} 条):")
-        for i, action in enumerate(history, 1):
-            print(f"  {i}. {action['command']}: {action.get('start', '')} -> {action.get('end', '')}")
-
-
-def main():
-    """主函数 - 启动 CAD AutoPilot"""
-    print("""
-╔══════════════════════════════════════════════════════════════╗
-║                    🎮 CAD AutoPilot                        ║
-║              AI 驱动的 CAD 自动化系统                       ║
-╚══════════════════════════════════════════════════════════════╝
-    """)
-    
-    # 检查 API Key
-    api_key = os.getenv("MIMO_API_KEY")
-    if not api_key:
-        print("⚠️  未找到 MIMO_API_KEY 环境变量")
-        print("请设置: set MIMO_API_KEY=your_api_key")
-        print("或在初始化时传入: CADAutoPilot(api_key='your_key')")
-        return
-    
-    try:
-        # 初始化
-        autopilot = CADAutoPilot(api_key)
+    def run(self, goal: str = None, max_steps: int = None):
+        """运行自动化循环"""
+        if goal:
+            self.set_goal(goal)
+        if max_steps:
+            self.max_steps = max_steps
         
-        # 显示当前屏幕状态
-        print("\n📸 分析当前屏幕...")
-        state = autopilot.see()
+        if not self.goal:
+            print("[AutoPilot] ❌ 未设置目标！")
+            return
         
-        if "error" not in state:
-            print("\n当前屏幕状态:")
-            print(json.dumps(state, indent=2, ensure_ascii=False)[:500] + "...")
+        self.running = True
+        step = 0
         
-        print("\n" + "=" * 60)
-        print("✅ CAD AutoPilot 已就绪！")
-        print("=" * 60)
-        print("\n常用方法:")
-        print("  autopilot.see()          # 查看屏幕")
-        print("  autopilot.find('元素')    # 查找元素")
-        print("  autopilot.click('元素')   # 点击元素")
-        print("  autopilot.draw_line(...)  # 画直线")
-        print("  autopilot.draw_circle(...) # 画圆")
-        print("  autopilot.type('命令')    # 输入命令")
-        print("  autopilot.execute('任务') # AI 自动执行")
-        print("=" * 60)
+        print(f"\n[AutoPilot] 🚀 开始执行...")
+        print(f"[AutoPilot] 最大步数: {self.max_steps}\n")
         
-        # 保持交互
-        return autopilot
+        while self.running and step < self.max_steps:
+            step += 1
+            print(f"\n--- 循环 {step}/{self.max_steps} ---")
+            
+            # 1. 看
+            screen_desc = self.look()
+            
+            # 2. 想
+            action = self.think(screen_desc)
+            print(f"[Think] 💭 决策: {json.dumps(action, ensure_ascii=False)[:200]}")
+            
+            # 3. 做
+            done = self.act(action)
+            
+            if done:
+                print(f"\n[AutoPilot] 🎉 任务完成！共 {step} 步")
+                break
+            
+            # 4. 等待
+            time.sleep(self.step_delay)
         
-    except Exception as e:
-        print(f"\n❌ 初始化失败: {e}")
-        import traceback
-        traceback.print_exc()
+        if step >= self.max_steps:
+            print(f"\n[AutoPilot] ⚠️ 达到最大步数 ({self.max_steps})")
+        
+        self.running = False
+    
+    def stop(self):
+        """停止"""
+        self.running = False
+        print("[AutoPilot] ⏹️ 已停止")
+    
+    def _build_look_prompt(self) -> str:
+        return (
+            "请详细描述当前屏幕截图的内容。\n"
+            "重点关注：\n"
+            "1. 这是什么软件？（CAD/SolidWorks/其他）\n"
+            "2. 顶部菜单栏有什么选项？\n"
+            "3. 左侧工具栏有什么工具？\n"
+            "4. 中间绘图区域的内容\n"
+            "5. 命令行/状态栏显示什么\n"
+            "6. 当前鼠标位置附近有什么\n"
+            "请用中文简洁描述。"
+        )
+    
+    def _build_think_prompt(self, screen_description: str) -> str:
+        w, h = self.ctrl.get_screen_size()
+        return (
+            f"你是 CAD 自动化助手。\n\n"
+            f"当前目标：{self.goal}\n\n"
+            f"屏幕分辨率：{w}x{h}\n\n"
+            f"当前屏幕描述：\n{screen_description[:500]}\n\n"
+            f"请决定下一步操作。返回严格的 JSON 格式：\n"
+            f'{{"action": "操作类型", "x": 数字, "y": 数字, "value": "文字", "key": "快捷键", "reason": "原因"}}\n\n'
+            f"支持的 action 类型：\n"
+            f'- click: 点击 (需要 x, y)\n'
+            f'- double_click: 双击 (需要 x, y)\n'  
+            f'- right_click: 右键 (需要 x, y)\n'
+            f'- type: 输入英文/数字 (需要 value)\n'
+            f'- type_chinese: 输入中文 (需要 value)\n'
+            f'- hotkey: 快捷键 (需要 key, 如 "ctrl+z")\n'
+            f'- drag: 拖拽 (需要 x1,y1,x2,y2)\n'
+            f'- scroll: 滚动 (需要 x, y, amount)\n'
+            f'- enter: 回车\n'
+            f'- escape: ESC\n'
+            f'- wait: 等待\n'
+            f'- done: 任务已完成\n\n'
+            f"坐标必须在屏幕范围内（0-{w}, 0-{h}）。\n"
+            f"只返回 JSON，不要其他文字。"
+        )
+    
+    def _parse_action(self, content: str) -> Optional[Dict]:
+        """从 AI 输出中解析操作指令"""
+        try:
+            # 尝试直接解析
+            action = json.loads(content.strip())
+            return action
+        except:
+            pass
+        
+        # 尝试提取 JSON
+        try:
+            # 移除 markdown 代码块
+            cleaned = re.sub(r'```json?\s*', '', content)
+            cleaned = re.sub(r'```\s*', '', cleaned)
+            
+            # 找到 JSON 对象
+            match = re.search(r'\{[^{}]*\}', cleaned, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+        except:
+            pass
+        
+        # 尝试从中文描述中提取坐标
+        coord_match = re.search(r'(\d{2,4})\s*[,.]\s*(\d{2,4})', content)
+        if coord_match:
+            return {
+                "action": "click",
+                "x": int(coord_match.group(1)),
+                "y": int(coord_match.group(2)),
+                "reason": "从描述中提取坐标"
+            }
+        
         return None
+    
+    def get_summary(self) -> str:
+        """获取操作摘要"""
+        history = self.ctrl.get_history()
+        summary = f"共执行 {len(history)} 步操作：\n"
+        for i, h in enumerate(history[:20], 1):
+            summary += f"  {i}. {h['action']}"
+            if 'x' in h and 'y' in h:
+                summary += f" ({h['x']},{h['y']})"
+            if 'text' in h:
+                summary += f" '{h['text']}'"
+            summary += "\n"
+        if len(history) > 20:
+            summary += f"  ... 还有 {len(history)-20} 步"
+        return summary
 
 
 if __name__ == "__main__":
-    autopilot = main()
+    # 快速测试
+    autopilot = CADAutoPilot()
+    
+    # 测试视觉
+    print("\n[测试] 截屏并分析...")
+    screen = autopilot.look()
+    print(f"\n屏幕描述:\n{screen[:500]}")
