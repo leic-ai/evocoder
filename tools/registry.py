@@ -170,6 +170,62 @@ class ToolRegistry:
             raise KeyError(f"Tool {name!r} not found in registry")
         return self.tools[name].execute(**kwargs)
 
+    def execute_with_retry(
+        self,
+        name: str,
+        brain: Any = None,
+        max_retries: int = 2,
+        **kwargs: Any,
+    ) -> tuple:
+        """Execute a tool with automatic retry and optional LLM-assisted error correction.
+
+        On failure, if a Brain instance is provided, asks the LLM to analyze
+        the error and suggest corrected arguments. Falls back to plain retry
+        with original args if no brain is available.
+
+        Args:
+            name: Tool name to execute.
+            brain: Optional Brain instance for LLM-assisted correction.
+            max_retries: Maximum number of attempts (default 2).
+            **kwargs: Arguments to pass to the tool.
+
+        Returns:
+            Tuple of (result_str, is_error_bool).
+        """
+        if name not in self.tools:
+            return f"[ERR:NOT_FOUND] Tool {name!r} not found in registry", True
+
+        last_error = None
+        current_kwargs = dict(kwargs)
+
+        for attempt in range(max_retries):
+            try:
+                result = self.tools[name].execute(**current_kwargs)
+                return result, False
+            except Exception as e:
+                last_error = e
+
+                if attempt < max_retries - 1:
+                    # Try LLM-assisted correction if brain is available
+                    if brain is not None:
+                        try:
+                            import json as _json
+                            fix_prompt = (
+                                f"Tool '{name}' failed with error: {type(e).__name__}: {e}\n"
+                                f"Original arguments: {_json.dumps(current_kwargs, ensure_ascii=False)}\n"
+                                f"Suggest corrected arguments as a JSON object. "
+                                f"Only output the JSON, no explanation."
+                            )
+                            fix_response = brain.think([{"role": "user", "content": fix_prompt}])
+                            new_args = _json.loads(fix_response.content)
+                            if isinstance(new_args, dict):
+                                current_kwargs.update(new_args)
+                                continue
+                        except Exception:
+                            pass  # LLM correction failed, retry with original args
+
+        return f"[ERR:RETRY_EXHAUSTED] {type(last_error).__name__}: {last_error}", True
+
     # -- OpenAI integration -------------------------------------------------
 
     def to_openai_tools(self) -> List[Dict[str, Any]]:

@@ -111,6 +111,7 @@ class PromptEvolver:
         strategy_memory: Any = None,
         user_prefs: Any = None,
         *,
+        brain: Any = None,
         persist_dir: str = ".evocoder/evolution",
         base_prompt: str = DEFAULT_SYSTEM_PROMPT,
         min_tasks_for_evolution: int = 5,
@@ -124,6 +125,7 @@ class PromptEvolver:
         self.error_memory = error_memory
         self.strategy_memory = strategy_memory
         self.user_prefs = user_prefs
+        self.brain = brain  # LLM engine for reflection-based evolution
 
         # Configuration
         self.persist_dir = Path(persist_dir)
@@ -766,6 +768,122 @@ class PromptEvolver:
         custom_context: Optional[str],
     ) -> Tuple[str, List[str]]:
         """Construct an evolved prompt addressing detected issues.
+
+        Two-layer strategy:
+          1. If a Brain (LLM) is available and there are failure records,
+             use LLM reflection to rewrite the prompt.
+          2. Fall back to rule-based section appending.
+
+        Returns:
+            (evolved_prompt, list_of_change_descriptions)
+        """
+        # Gather recent failures for LLM context
+        failures = []
+        if self.tracker is not None and hasattr(self.tracker, "failed_tasks"):
+            try:
+                failed_tasks = self.tracker.failed_tasks(n=10)
+                for task in failed_tasks:
+                    failures.append({
+                        "task": task.description,
+                        "category": task.category,
+                        "errors": [e.get("msg", str(e)) for e in task.errors[:3]] if task.errors else [],
+                    })
+            except Exception:
+                pass
+
+        # Layer 1: LLM-driven reflection (if brain available and failures exist)
+        if self.brain and failures:
+            try:
+                evolved, changes = self._llm_reflect_and_rewrite(
+                    current_prompt, analysis, failures, custom_context,
+                )
+                if evolved and evolved.strip() != current_prompt.strip():
+                    return evolved, changes
+            except Exception as exc:
+                logger.warning("LLM reflection failed, falling back to rule-based: %s", exc)
+
+        # Layer 2: Rule-based fallback (original logic)
+        return self._rule_based_evolve(current_prompt, analysis, custom_context)
+
+    def _llm_reflect_and_rewrite(
+        self,
+        current_prompt: str,
+        analysis: Dict[str, Any],
+        failures: List[Dict[str, Any]],
+        custom_context: Optional[str] = None,
+    ) -> Tuple[str, List[str]]:
+        """Use LLM to reflect on failures and rewrite the system prompt.
+
+        This is the core of the evolution system — instead of just appending
+        rules, we ask the LLM to analyze failure patterns and produce a
+        improved prompt that addresses them.
+
+        Returns:
+            (evolved_prompt, list_of_change_descriptions)
+        """
+        failure_lines = []
+        for f in failures[:10]:
+            errors = ", ".join(f.get("errors", [])[:2]) or "unknown error"
+            failure_lines.append(
+                f"- [{f.get('category', '?')}] {f.get('task', 'N/A')[:80]} → {errors}"
+            )
+        failure_text = "\n".join(failure_lines) if failure_lines else "No specific failures recorded."
+
+        # Add hotspot context from analysis
+        hotspots = analysis.get("hotspot_categories", [])
+        hotspot_text = ""
+        if hotspots:
+            hotspot_lines = [
+                f"- {h.get('category', '?')}: {h.get('failure_rate', 0):.0%} failure rate"
+                for h in hotspots[:5]
+            ]
+            hotspot_text = "\n".join(hotspot_lines)
+
+        reflect_prompt = f"""You are a prompt engineer. Analyze the following system prompt and recent failure records, then rewrite the prompt to avoid these failures.
+
+## Current System Prompt
+```
+{current_prompt}
+```
+
+## Recent Failure Records
+{failure_text}
+
+{f"## Hotspot Categories{chr(10)}{hotspot_text}" if hotspot_text else ""}
+
+{f"## Additional Context{chr(10)}{custom_context}" if custom_context else ""}
+
+## Requirements
+1. Preserve the original prompt's core instructions and formatting
+2. Add specific, actionable defensive rules针对 each failure pattern
+3. Be concrete — not generic advice like "handle errors carefully"
+4. For each failure pattern, add a specific rule that would have prevented it
+5. Keep the prompt under {self.max_prompt_tokens} tokens
+6. Output ONLY the complete new system prompt, no explanations or markdown fences
+"""
+
+        response = self.brain.think([{"role": "user", "content": reflect_prompt}])
+        evolved = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+
+        # Validate: must be non-empty and different
+        if not evolved or len(evolved) < 50:
+            raise ValueError("LLM produced too short a prompt")
+
+        changes = [
+            f"LLM-driven rewrite based on {len(failures)} failure records",
+            f"Addressed {len(hotspots)} hotspot categories",
+        ]
+
+        logger.info("LLM reflection produced evolved prompt (%d chars)", len(evolved))
+        return evolved, changes
+
+    def _rule_based_evolve(
+        self,
+        current_prompt: str,
+        analysis: Dict[str, Any],
+        custom_context: Optional[str] = None,
+    ) -> Tuple[str, List[str]]:
+        """Rule-based prompt evolution (fallback when LLM is unavailable).
 
         Returns:
             (evolved_prompt, list_of_change_descriptions)

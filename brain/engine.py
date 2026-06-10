@@ -13,8 +13,8 @@ from openai import OpenAI
 from utils.platform import get_platform_prompt
 
 
-_BASE_SYSTEM_PROMPT = """You are EvoCoder, a self-evolving programming assistant powered by DeepSeek.
-You are NOT Claude, NOT GPT. You run on DeepSeek V4 Pro with 1M context window.
+_BASE_SYSTEM_PROMPT = """You are EvoCoder, a self-evolving programming assistant.
+You are NOT Claude, NOT GPT. You run on MiMo v2.5 Pro with 1M context window.
 You can help users with programming tasks by calling tools.
 
 Rules:
@@ -108,10 +108,9 @@ class TokenCache:
 class Brain:
     """DeepSeek inference engine with retry logic and token optimization"""
 
-    def __init__(self, api_key: str, base_url: str = "https://api.deepseek.com",
-                 model: str = "deepseek-chat", system_prompt: str | None = None,
-                 max_retries: int = 3, retry_delay: float = 2.0, timeout: int = 120,
-                 **kwargs):
+    def __init__(self, api_key: str, base_url: str = "https://api.xiaomimimo.com/v1",
+                 model: str = "mimo-v2.5-pro", system_prompt: str | None = None,
+                 max_retries: int = 3, retry_delay: float = 2.0, timeout: int = 120):
         self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
         self.model = model
         self.system_prompt = system_prompt or get_system_prompt()
@@ -120,6 +119,36 @@ class Brain:
         self.timeout = timeout
         self.token_cache = TokenCache()
         self.token_cache.update_prefix(self.system_prompt)
+        self._consecutive_errors = 0
+
+    def _classify_error(self, e: Exception) -> str:
+        """Classify error type for appropriate retry strategy."""
+        error_type = type(e).__name__
+        error_str = str(e).lower()
+
+        if "authentication" in error_type.lower() or "401" in error_str:
+            return "auth"
+        if "ratelimit" in error_type.lower() or "429" in error_str:
+            return "rate_limit"
+        if "timeout" in error_type.lower() or "timed out" in error_str:
+            return "timeout"
+        if "connection" in error_type.lower() or "network" in error_str or "eof" in error_str:
+            return "network"
+        if "overloaded" in error_str or "503" in error_str or "529" in error_str:
+            return "overloaded"
+        return "unknown"
+
+    def _get_retry_delay(self, error_class: str, attempt: int) -> float:
+        """Get appropriate retry delay based on error type."""
+        base = self.retry_delay * (2 ** attempt)
+
+        if error_class == "rate_limit":
+            return base * 2  # longer backoff for rate limits
+        if error_class == "overloaded":
+            return base * 3  # even longer for overloaded servers
+        if error_class == "timeout":
+            return base * 0.5  # shorter for timeouts (might be transient)
+        return base
 
     def think(self, messages: list[dict], tools: list[dict] | None = None) -> object:
         """Send conversation to DeepSeek, return response object with .content and .tool_calls"""
@@ -141,9 +170,9 @@ class Brain:
             try:
                 response = self.client.chat.completions.create(**kwargs)
                 self.token_cache.update_stats(response)
-                # Create a wrapper that includes usage info
+                self._consecutive_errors = 0  # reset on success
+
                 message = response.choices[0].message
-                # Add usage info to the message object
                 if hasattr(response, 'usage') and response.usage:
                     message._usage = {
                         'prompt_tokens': response.usage.prompt_tokens or 0,
@@ -155,15 +184,32 @@ class Brain:
                 return message
             except Exception as e:
                 last_error = e
-                error_type = type(e).__name__
-                if "AuthenticationError" in error_type or "401" in str(e):
+                self._consecutive_errors += 1
+                error_class = self._classify_error(e)
+
+                # Don't retry auth errors
+                if error_class == "auth":
                     raise
-                wait = self.retry_delay * (2 ** attempt)
-                if "RateLimitError" in error_type or "429" in str(e):
-                    wait *= 2
+
+                wait = self._get_retry_delay(error_class, attempt)
+
                 if attempt < self.max_retries - 1:
-                    print(f"  [Brain] API error ({error_type}), retrying in {wait:.1f}s...")
+                    logger.warning("API error (%s, class=%s), retrying in %.1fs... (attempt %d/%d)",
+                                   type(e).__name__, error_class, wait, attempt + 1, self.max_retries)
                     time.sleep(wait)
+
+                # Recreate client after consecutive network errors
+                if self._consecutive_errors >= 3 and error_class in ("network", "timeout"):
+                    try:
+                        self.client = OpenAI(
+                            api_key=self.client.api_key,
+                            base_url=str(self.client.base_url),
+                            timeout=self.timeout,
+                        )
+                        logger.info("Recreated API client after %d consecutive errors", self._consecutive_errors)
+                    except Exception:
+                        pass
+
         raise last_error
 
     def think_stream(self, messages: list[dict], tools: list[dict] | None = None):
@@ -182,7 +228,28 @@ class Brain:
             kwargs["tools"] = filtered_tools
             kwargs["tool_choice"] = "auto"
 
-        response = self.client.chat.completions.create(**kwargs)
+        # Retry logic for stream creation
+        last_error = None
+        for attempt in range(self.max_retries):
+            try:
+                response = self.client.chat.completions.create(**kwargs)
+                self._consecutive_errors = 0
+                break
+            except Exception as e:
+                last_error = e
+                self._consecutive_errors += 1
+                error_class = self._classify_error(e)
+
+                if error_class == "auth":
+                    raise
+
+                if attempt < self.max_retries - 1:
+                    wait = self._get_retry_delay(error_class, attempt)
+                    logger.warning("Stream API error (%s), retrying in %.1fs...", error_class, wait)
+                    time.sleep(wait)
+        else:
+            raise last_error
+
         full_content = ""
         tool_calls = {}
         for chunk in response:

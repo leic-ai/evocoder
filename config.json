@@ -1,7 +1,7 @@
 {
   "api": {
-    "base_url": "https://api.deepseek.com",
-    "model": "deepseek-v4-pro",
+    "base_url": "https://api.xiaomimimo.com/v1",
+    "model": "mimo-v2.5-pro",
     "max_retries": 3,
     "retry_delay": 2,
     "timeout": 120,

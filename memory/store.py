@@ -184,6 +184,71 @@ class MemoryStore:
         """Number of messages currently in the conversation buffer."""
         return len(self._conversation)
 
+    def compress_context(
+        self,
+        messages: List[Dict[str, str]],
+        target_count: int = 30,
+        brain: Any = None,
+    ) -> List[Dict[str, str]]:
+        """Intelligently compress conversation history to fit within target count.
+
+        Strategy:
+          1. If messages already fit, return as-is.
+          2. Split into old (to compress) and recent (to keep).
+          3. If a Brain (LLM) is available, summarize old messages.
+          4. Otherwise, keep first message + recent N messages.
+
+        Args:
+            messages: Full conversation history (role/content dicts).
+            target_count: Target number of messages after compression.
+            brain: Optional Brain instance for LLM-powered summarization.
+
+        Returns:
+            Compressed message list (system summary + recent messages).
+        """
+        if len(messages) <= target_count:
+            return messages
+
+        # Keep the most recent messages intact
+        recent = messages[-target_count:]
+        old_messages = messages[:-target_count]
+
+        # Build a summary of old messages
+        summary_parts = []
+        for msg in old_messages:
+            role = msg.get("role", "?")
+            content = msg.get("content", "")[:200]
+            summary_parts.append(f"[{role}] {content}")
+
+        summary_text = "\n".join(summary_parts)
+
+        # Try LLM-powered summarization if brain is available
+        if brain is not None:
+            try:
+                resp = brain.think([{
+                    "role": "user",
+                    "content": (
+                        "Compress this conversation history into a concise summary. "
+                        "Preserve: key decisions, tool results, error messages, "
+                        "file paths mentioned, and any important context. "
+                        "Remove: greetings, filler, redundant information.\n\n"
+                        f"Conversation:\n{summary_text}"
+                    ),
+                }])
+                summary_text = resp.content if hasattr(resp, 'content') else str(resp)
+            except Exception:
+                pass  # Summarization failed, use truncated original
+
+        # Truncate summary if still too long
+        max_summary_chars = 2000
+        if len(summary_text) > max_summary_chars:
+            summary_text = summary_text[:max_summary_chars] + "\n...[truncated]"
+
+        # Return: summary as system message + recent messages
+        return [
+            {"role": "system", "content": f"[Conversation History Summary]\n{summary_text}"}
+        ] + recent
+
     # ===================================================================
     # Working memory (session-scoped key-value context)
     # ===================================================================

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""EvoCoder CLI — ╭── 圆角复古终端风格 ──╮"""
+"""EvoCoder CLI"""
 
 import os
 import sys
@@ -7,6 +7,20 @@ import json
 import time
 import argparse
 from pathlib import Path
+
+# Fix Windows encoding issues (must be before any print/import)
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -230,7 +244,7 @@ def cmd_memory(agent):
 def cmd_pitfalls(agent):
     summary = agent.error_memory.get_pitfall_summary()
     console.print(box_title("KNOWN PITFALLS", "bold red"))
-    if summary.get("total_errors", 0) == 0:
+    if summary.total_errors == 0:
         console.print(f"  [dim]│[/dim]  No known pitfalls yet. Keep going!")
         console.print(box_subtitle("─" * 20))
         return
@@ -240,11 +254,11 @@ def cmd_pitfalls(agent):
               title_style="bold", padding=(0, 2))
     t.add_column("Error Type", style="bold red")
     t.add_column("Count", justify="right")
-    for etype, count in summary.get("error_types", {}).items():
+    for etype, count in summary.error_breakdown.items():
         t.add_row(etype, str(count))
     console.print(t)
 
-    tips = summary.get("tips", [])
+    tips = summary.tips
     if tips:
         console.print(f"  [dim]╭──[/dim] [yellow]Tips[/yellow] [dim]──╮[/dim]")
         for tip in tips[:3]:
@@ -445,11 +459,54 @@ def _print_brewed_footer(agent, elapsed: float):
         console.print(f"  [bright_white]*[/bright_white] [brew]Brewed for {time_str}[/brew]")
 
 
+def cmd_scoreboard(agent):
+    """Show tool performance scoreboard."""
+    report = agent.scoreboard.report()
+    console.print(box_title("TOOL SCOREBOARD", "bold bright_green"))
+
+    if report["total_tools"] == 0:
+        console.print(f"  [dim]│[/dim]  No tool usage recorded yet.")
+        console.print(box_subtitle("─" * 20))
+        return
+
+    t = Table(box=box.ROUNDED, border_style="bright_green",
+              title="[bold bright_green]Tool Performance[/bold bright_green]",
+              title_style="bold", padding=(0, 2))
+    t.add_column("Tool", style="bold")
+    t.add_column("Calls", justify="right")
+    t.add_column("Success", justify="right")
+    t.add_column("Avg ms", justify="right")
+    t.add_column("Score", justify="right")
+
+    for tool in report["tools"]:
+        sr = tool["success_rate"]
+        sr_style = "green" if sr >= 0.8 else "yellow" if sr >= 0.6 else "red"
+        score = tool["composite_score"]
+        score_style = "green" if score >= 0.7 else "yellow" if score >= 0.5 else "red"
+        t.add_row(
+            tool["tool_name"],
+            str(tool["total_calls"]),
+            f"[{sr_style}]{sr:.0%}[/{sr_style}]",
+            f"{tool['avg_duration_ms']:.0f}",
+            f"[{score_style}]{score:.2f}[/{score_style}]",
+        )
+    console.print(t)
+
+    under = report.get("underperforming", [])
+    if under:
+        console.print(f"  [dim]╭──[/dim] [red]Underperforming[/red] [dim]──╮[/dim]")
+        for u in under:
+            console.print(f"  [dim]│[/dim]  {u['tool_name']}: {u['success_rate']:.0%} success, score={u['composite_score']:.2f}")
+
+    console.print(box_subtitle("─" * 20))
+
+
 def cmd_help():
     console.print(box_title("HELP", "bold bright_cyan"))
     commands = [
         ("/help", "Show this help"),
         ("/tools", "List available tools"),
+        ("/scoreboard", "Tool performance scores"),
         ("/stats", "View statistics & success rates"),
         ("/evolve", "Evolution system status"),
         ("/evolve tools", "View evolved tools"),
@@ -477,6 +534,33 @@ def cmd_help():
 
 
 def main():
+    try:
+        _main()
+    except KeyboardInterrupt:
+        print("\nBye!")
+    except Exception as e:
+        import traceback
+        crash_log = traceback.format_exc()
+        print(f"\nFatal error: {type(e).__name__}: {e}")
+
+        # Write crash log to file for diagnosis
+        try:
+            log_path = Path(".evocoder") / "crash.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"\n{'='*60}\n")
+                f.write(f"Crash at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"{'='*60}\n")
+                f.write(crash_log)
+                f.write("\n")
+            print(f"Crash log saved to: {log_path}")
+        except Exception:
+            traceback.print_exc()
+
+        print("\nYour data is saved. Restart with: python cli.py")
+
+
+def _main():
     parser = argparse.ArgumentParser(description="EvoCoder - Self-Evolving Programming Agent")
     parser.add_argument("--api-key", help="DeepSeek API key")
     parser.add_argument("--model", help="Model name")
@@ -484,17 +568,17 @@ def main():
     args = parser.parse_args()
 
     # Load API key
-    api_key = args.api_key or os.getenv("DEEPSEEK_API_KEY")
+    api_key = args.api_key or os.getenv("MIMO_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
         try:
             from dotenv import load_dotenv
             load_dotenv()
-            api_key = os.getenv("DEEPSEEK_API_KEY")
+            api_key = os.getenv("MIMO_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
         except ImportError:
             pass
 
     if not api_key:
-        console.print("[error]Error: No API key found. Set DEEPSEEK_API_KEY or use --api-key[/error]")
+        console.print("[error]Error: No API key found. Set MIMO_API_KEY or DEEPSEEK_API_KEY, or use --api-key[/error]")
         sys.exit(1)
 
     # Initialize
@@ -503,7 +587,7 @@ def main():
 
     console.print(f"\n  [success]EvoCoder ready![/success] Type your task or /help for commands.\n")
 
-    # REPL
+    # REPL — never exits on error, only on /quit or Ctrl+C
     while True:
         try:
             user_input = console.input("[user]> [/user]").strip()
@@ -520,73 +604,158 @@ def main():
             cmd = parts[0].lower()
             arg = parts[1] if len(parts) > 1 else ""
 
-            if cmd == "/quit" or cmd == "/exit" or cmd == "/q":
-                console.print("  [info]Bye! 🐳[/info]")
-                break
-            elif cmd == "/help" or cmd == "/h":
-                cmd_help()
-            elif cmd == "/tools":
-                cmd_tools(agent)
-            elif cmd == "/stats":
-                cmd_stats(agent)
-            elif cmd == "/evolve":
-                cmd_evolve(agent, arg)
-            elif cmd == "/memory":
-                cmd_memory(agent)
-            elif cmd == "/pitfalls":
-                cmd_pitfalls(agent)
-            elif cmd == "/prefs":
-                cmd_prefs(agent)
-            elif cmd == "/subagents":
-                cmd_subagents(agent)
-            elif cmd == "/search":
-                cmd_search(agent, arg)
-            elif cmd == "/fetch":
-                cmd_fetch(agent, arg)
-            elif cmd == "/sdd":
-                cmd_sdd(agent, arg)
-            elif cmd == "/token":
-                cmd_token(agent)
-            elif cmd == "/name":
-                if arg:
-                    agent.long_term.update_user(name=arg)
-                    agent.long_term.save_all()
-                    console.print(f"  [success]Nice to meet you, {arg}! 🐳[/success]")
+            try:
+                if cmd == "/quit" or cmd == "/exit" or cmd == "/q":
+                    console.print("  [info]Bye![/info]")
+                    break
+                elif cmd == "/help" or cmd == "/h":
+                    cmd_help()
+                elif cmd == "/tools":
+                    cmd_tools(agent)
+                elif cmd == "/stats":
+                    cmd_stats(agent)
+                elif cmd == "/scoreboard":
+                    cmd_scoreboard(agent)
+                elif cmd == "/evolve":
+                    cmd_evolve(agent, arg)
+                elif cmd == "/memory":
+                    cmd_memory(agent)
+                elif cmd == "/pitfalls":
+                    cmd_pitfalls(agent)
+                elif cmd == "/prefs":
+                    cmd_prefs(agent)
+                elif cmd == "/subagents":
+                    cmd_subagents(agent)
+                elif cmd == "/search":
+                    cmd_search(agent, arg)
+                elif cmd == "/fetch":
+                    cmd_fetch(agent, arg)
+                elif cmd == "/sdd":
+                    cmd_sdd(agent, arg)
+                elif cmd == "/token":
+                    cmd_token(agent)
+                elif cmd == "/name":
+                    if arg:
+                        agent.long_term.update_user(name=arg)
+                        agent.long_term.save_all()
+                        console.print(f"  [success]Nice to meet you, {arg}![/success]")
+                    else:
+                        console.print("  [warning]Usage: /name <your_name>[/warning]")
+                elif cmd == "/feedback":
+                    if arg in ("+", "positive", "good"):
+                        agent.user_prefs.learn_from_feedback("positive feedback - user is satisfied with the output")
+                        console.print("  [success]Thanks! Reinforcing positive patterns.[/success]")
+                    elif arg in ("-", "negative", "bad"):
+                        agent.user_prefs.learn_from_feedback("negative feedback - user wants different approach")
+                        console.print("  [info]Noted. Will avoid this pattern.[/info]")
+                    else:
+                        console.print("  [warning]Usage: /feedback +/-[/warning]")
+                elif cmd == "/clear":
+                    agent.memory.clear_conversation()
+                    agent.memory.clear_working()
+                    console.print("  [info]Session cleared.[/info]")
                 else:
-                    console.print("  [warning]Usage: /name <your_name>[/warning]")
-            elif cmd == "/feedback":
-                if arg in ("+", "positive", "good"):
-                    agent.user_prefs.learn_from_feedback("positive feedback - user is satisfied with the output")
-                    console.print("  [success]Thanks! Reinforcing positive patterns.[/success]")
-                elif arg in ("-", "negative", "bad"):
-                    agent.user_prefs.learn_from_feedback("negative feedback - user wants different approach")
-                    console.print("  [info]Noted. Will avoid this pattern.[/info]")
-                else:
-                    console.print("  [warning]Usage: /feedback +/-[/warning]")
-            elif cmd == "/clear":
-                agent.memory.clear_conversation()
-                agent.memory.clear_working()
-                console.print("  [info]Session cleared.[/info]")
-            else:
-                console.print(f"  [warning]Unknown command: {cmd}. Type /help for commands.[/warning]")
+                    console.print(f"  [warning]Unknown command: {cmd}. Type /help for commands.[/warning]")
+            except Exception as cmd_err:
+                console.print(f"  [error]Command error: {type(cmd_err).__name__}: {cmd_err}[/error]")
             continue
 
-        # Run agent
+        # Run agent with true token-level streaming
         try:
+            from agent_events import EventType
             console.print()
             start_time = time.time()
-            result = agent.run(user_input)
-            elapsed = time.time() - start_time
-            console.print()
-            console.print(Panel(result,
-                                border_style="bright_cyan", padding=(1, 2)))
+            final_result = ""
+            _streaming_content = False  # Track if we're in a streaming content block
 
-            # ── Brewed footer (like Claude Code) ──
-            _print_brewed_footer(agent, elapsed)
+            for event in agent.run_stream(user_input):
+                try:
+                    if event.type == EventType.THINKING:
+                        if _streaming_content:
+                            console.print("[/agent]", highlight=False)
+                            _streaming_content = False
+                        console.print(f"  [dim]Step {event.step}...[/dim]", highlight=False)
+
+                    elif event.type == EventType.CONTENT_TOKEN:
+                        # Real-time token streaming via Rich console (not raw stdout)
+                        token = event.data.get("token", "")
+                        if not _streaming_content:
+                            console.print("  [agent]", end="", highlight=False)
+                            _streaming_content = True
+                        # Use Rich console for consistent output
+                        console.out(token, end="", highlight=False)
+
+                    elif event.type == EventType.CONTENT:
+                        text = event.data.get("text", "")
+                        final_result = text
+                        if _streaming_content:
+                            console.print("[/agent]", highlight=False)
+                            _streaming_content = False
+
+                    elif event.type == EventType.TOOL_CALL:
+                        if _streaming_content:
+                            console.print("[/agent]", highlight=False)
+                            _streaming_content = False
+                        name = event.data.get("name", "?")
+                        args = event.data.get("args", {})
+                        args_str = json.dumps(args, ensure_ascii=False)[:80]
+                        console.print(f"\n  [tool]>> {name}({args_str})[/tool]", highlight=False)
+
+                    elif event.type == EventType.TOOL_RESULT:
+                        name = event.data.get("name", "?")
+                        result_text = event.data.get("result", "")
+                        is_err = event.data.get("is_error", False)
+                        style = "error" if is_err else "dim"
+                        console.print(f"  [tool]-> [{style}] {result_text[:120]}[/tool]", highlight=False)
+
+                    elif event.type == EventType.PITFALL_WARNING:
+                        etype = event.data.get("error_type", "?")
+                        hint = event.data.get("hint", "")
+                        console.print(f"  [warning]! Pitfall: {etype} -> {hint[:80]}[/warning]", highlight=False)
+
+                    elif event.type == EventType.EVOLUTION:
+                        cat = event.data.get("category", "?")
+                        action = event.data.get("action", "")
+                        console.print(f"  [evolve]Evolution [{cat}]: {action}[/evolve]", highlight=False)
+
+                    elif event.type == EventType.ERROR:
+                        msg = event.data.get("message", "Unknown error")
+                        console.print(f"\n  [error]ERROR: {msg}[/error]", highlight=False)
+
+                    elif event.type == EventType.SUMMARY:
+                        if _streaming_content:
+                            console.print("[/agent]", highlight=False)
+                            _streaming_content = False
+                        final_result = event.data.get("result", final_result)
+                        success = event.data.get("success", False)
+                        total_time = event.data.get("total_time", 0)
+
+                        # Print result panel
+                    console.print()
+                    console.print(Panel(final_result,
+                                        border_style="bright_cyan", padding=(1, 2)))
+
+                    # Brewed footer
+                    _print_brewed_footer(agent, total_time)
+
+                except Exception as event_err:
+                    # Per-event error: log but don't crash the loop
+                    if _streaming_content:
+                        console.print("[/agent]", highlight=False)
+                        _streaming_content = False
+                    console.print(f"\n  [error]Event error: {type(event_err).__name__}: {event_err}[/error]", highlight=False)
+
         except KeyboardInterrupt:
+            if _streaming_content:
+                console.print("[/agent]", highlight=False)
             console.print("\n  [warning]Interrupted.[/warning]")
         except Exception as e:
+            if _streaming_content:
+                console.print("[/agent]", highlight=False)
             console.print(f"\n  [error]Error: {type(e).__name__}: {e}[/error]")
+            # Don't crash — continue the REPL
+            import traceback
+            traceback.print_exc()
 
 
 if __name__ == "__main__":

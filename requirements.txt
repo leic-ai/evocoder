@@ -1,13 +1,30 @@
-openai>=1.0.0
+# Core (required)
+openai>=1.58.0
 rich>=13.0.0
 prompt_toolkit>=3.0.0
-chromadb>=0.4.0
+python-dotenv>=1.0.0
+
+# Git integration
 gitpython>=3.1.0
+
+# HTTP & parsing
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 lxml>=4.9.0
+
+# WebSocket server
+websockets>=12.0
+
+# Optional: vector search (graceful degradation if missing)
+chromadb>=0.4.0
+
+# Optional: desktop automation (graceful degradation if missing)
 pyautogui>=0.9.54
 pyperclip>=1.8.0
+
+# Optional: data processing (graceful degradation if missing)
 pandas>=2.0.0
 openpyxl>=3.1.0
-python-dotenv>=1.0.0
+
+# Testing
+pytest>=8.0.0

@@ -403,9 +403,11 @@ class SubAgentManager:
         """
         Execute the think-act-observe loop for a sub-agent.
 
+        Uses native OpenAI tool_calls for reliable tool execution.
         Creates an isolated Brain + ToolRegistry, injects the platform prompt,
         and runs up to max_iterations rounds of LLM reasoning + tool execution.
         """
+        import json as _json
         start_time = time.time()
 
         # Build the full system prompt with platform awareness
@@ -419,8 +421,6 @@ class SubAgentManager:
             base_url=self._base_url,
             model=self._model,
             system_prompt=full_system_prompt,
-            enable_cache=True,
-            cache_dir=f".evocoder/cache/agent_{agent_id}",
         )
 
         # Create tool registry scoped to allowed tools
@@ -446,56 +446,64 @@ class SubAgentManager:
         error_msg: Optional[str] = None
 
         try:
-            # Build message history for Brain
             messages = [{"role": "user", "content": current_prompt}]
 
             for iteration in range(1, max_iterations + 1):
                 iterations_used = iteration
 
-                # Think: get LLM response (may contain tool calls)
+                # Think: get LLM response with native tool_calls
                 with self._brain_lock:
                     response = brain.think(
                         messages,
                         tools=tool_schemas if tool_schemas else None,
                     )
 
-                # Extract response content
                 response_text = response.content if hasattr(response, 'content') else str(response)
                 last_output = response_text
 
-                # Check if the agent signals completion
-                if self._is_task_complete(response_text):
-                    break
+                # Use native tool_calls (not regex parsing)
+                if hasattr(response, 'tool_calls') and response.tool_calls:
+                    # Append assistant message with tool calls
+                    messages.append({
+                        "role": "assistant",
+                        "content": response_text,
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                },
+                            }
+                            for tc in response.tool_calls
+                        ],
+                    })
 
-                # Add assistant response to message history
-                messages.append({"role": "assistant", "content": response_text})
+                    # Execute each tool call and append results
+                    for tc in response.tool_calls:
+                        tool_name = tc.function.name
+                        try:
+                            tool_args = _json.loads(tc.function.arguments)
+                        except _json.JSONDecodeError:
+                            tool_args = {"raw": tc.function.arguments}
 
-                # Try to execute any tool calls embedded in the response
-                tool_results = self._extract_and_execute_tools(
-                    response_text, registry
-                )
+                        try:
+                            result = registry.execute(tool_name, **tool_args)
+                        except Exception as tool_exc:
+                            result = f"[ERR:{type(tool_exc).__name__}] {tool_exc}"
 
-                if tool_results:
-                    tool_calls_made += len(tool_results)
-                    # Feed tool results back as the next message
-                    tool_result_text = (
-                        "Tool execution results:\n\n"
-                        + "\n\n".join(tool_results)
-                        + "\n\nContinue working on the task. "
-                        "If you are done, provide your final summary."
-                    )
-                    messages.append({"role": "user", "content": tool_result_text})
-                else:
-                    # No tool calls detected — ask the agent to continue or finish
-                    if iteration < max_iterations:
+                        tool_calls_made += 1
+
+                        # Append as tool role message
                         messages.append({
-                            "role": "user",
-                            "content": (
-                                "No tool calls were detected in your response. "
-                                "If you are finished, say so clearly. "
-                                "Otherwise, use a tool to make progress."
-                            ),
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": str(result)[:4000],
                         })
+                else:
+                    # No tool calls = agent is done
+                    break
 
         except Exception as exc:
             error_msg = str(exc)
@@ -550,111 +558,6 @@ class SubAgentManager:
             ])
 
         return "\n".join(parts)
-
-    # ------------------------------------------------------------------
-    # Internal: tool call extraction
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _extract_and_execute_tools(
-        response_text: str,
-        registry: ToolRegistry,
-    ) -> List[str]:
-        """
-        Parse tool invocation patterns from the LLM response and execute them.
-
-        Looks for structured tool call blocks in the response text.
-        Supports the format:
-
-            ```tool
-            {"name": "tool_name", "args": {"param": "value"}}
-            ```
-
-        Returns a list of tool result strings (one per executed tool).
-        If no tool calls are found, returns an empty list.
-        """
-        import json as _json
-        import re
-
-        results: List[str] = []
-
-        # Match ```tool ... ``` blocks
-        pattern = r"```tool\s*\n(.*?)\n```"
-        matches = re.findall(pattern, response_text, re.DOTALL)
-
-        for raw in matches:
-            raw = raw.strip()
-            if not raw:
-                continue
-
-            # Handle multiple JSON objects in one block (one per line)
-            for line in raw.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-
-                try:
-                    call = _json.loads(line)
-                except _json.JSONDecodeError:
-                    # Try the whole block as a single JSON
-                    try:
-                        call = _json.loads(raw)
-                    except _json.JSONDecodeError:
-                        results.append(f"[TOOL_ERROR] Failed to parse tool call: {raw[:200]}")
-                        continue
-
-                tool_name = call.get("name", "")
-                tool_args = call.get("args", call.get("arguments", {}))
-
-                if not tool_name:
-                    results.append(f"[TOOL_ERROR] Missing 'name' in tool call: {call}")
-                    continue
-
-                if tool_name not in registry:
-                    results.append(f"[TOOL_ERROR] Unknown tool: {tool_name}")
-                    continue
-
-                try:
-                    result = registry.execute(tool_name, **tool_args)
-                    results.append(f"[{tool_name}] {result}")
-                except Exception as exc:
-                    results.append(f"[TOOL_ERROR] {tool_name} failed: {exc}")
-
-                break  # one tool per match block
-
-        return results
-
-    # ------------------------------------------------------------------
-    # Internal: completion detection
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _is_task_complete(response_text: str) -> bool:
-        """
-        Heuristic check: does the response indicate the agent is done?
-
-        Looks for common completion signals in the response text.
-        """
-        lower = response_text.lower()
-
-        completion_markers = [
-            "task complete",
-            "task is complete",
-            "task is done",
-            "i have completed",
-            "i have finished",
-            "here is my final",
-            "final summary:",
-            "summary of what i did",
-            "in summary,",
-            "to summarize,",
-        ]
-
-        for marker in completion_markers:
-            if marker in lower:
-                return True
-
-        return False
 
     # ------------------------------------------------------------------
     # Internal: helpers

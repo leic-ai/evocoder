@@ -1,5 +1,42 @@
+# Environment & secrets
 .env
+.env.local
+*.key
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# EvoCoder runtime data
 .evocoder/
+evolved_tools/
 screenshots/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Screenshots & temp
+*.png
+*.jpg
+*.jpeg
+test_ws.txt
+auto_demo.py
